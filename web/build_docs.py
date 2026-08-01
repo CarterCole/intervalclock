@@ -41,6 +41,7 @@ main pre code {{ background: none; padding: 0; }}
   <nav>
     <a href="index.html">Clock</a>
     <a href="playground.html">Playground</a>
+    <a href="explore.html">Explore</a>
     <a href="docs.html" class="active">Protocol</a>
   </nav>
 </header>

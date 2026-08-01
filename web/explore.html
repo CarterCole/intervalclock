@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IntervalClock — explore</title>
+<link rel="stylesheet" href="style.css">
+<style>
+.trackchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--panel2);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+.trackchip .swatch { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.trackchip button {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 1rem; padding: 0 0.1rem; line-height: 1;
+}
+.trackchip button:hover { color: var(--accent2); }
+.addrow { display: flex; gap: 0.6rem; }
+.addrow input { flex: 1; }
+.addrow .chip { flex: none; align-self: center; }
+svg.lanes { width: 100%; display: block; }
+svg.lanes text { font-family: var(--mono); font-size: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="index.html">⏱ IntervalClock</a></h1>
+  <span class="tag">explore — schedules side by side, sliding on the shared timeline</span>
+  <nav>
+    <a href="index.html">Clock</a>
+    <a href="playground.html">Playground</a>
+    <a href="explore.html" class="active">Explore</a>
+    <a href="docs.html">Protocol</a>
+  </nav>
+</header>
+<main>
+  <div class="panel">
+    <h2>Tracks</h2>
+    <div class="addrow">
+      <input type="text" id="input" spellcheck="false"
+        placeholder="add a track: ic1: name · cron · 1/3 x3 @2 · 7.5hz · 2026-08-01T14 · mixes with & and |">
+      <button class="chip" id="add">⊕ add track</button>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="error" id="error" hidden></div>
+  </div>
+
+  <div class="panel">
+    <h2>Timeline <span class="muted" id="note"></span></h2>
+    <svg class="lanes" id="lanes" preserveAspectRatio="none"></svg>
+  </div>
+
+  <div class="panel muted">
+    Every lane slides on the same epoch-anchored window, so phase
+    relationships are visible directly: where pulses line up is exactly where
+    the intersection of those classes fires. Copy this page's URL to share
+    the whole stack — any browser reproduces it in sync.
+  </div>
+</main>
+<footer><a href="playground.html">decode one thing deeply</a> ·
+  <a href="docs.html">the protocol</a></footer>
+<script type="module">
+import { Frac, F, ZERO } from "./lib/rat.js";
+import {
+  PhaseClass, PSet, Span, Windowed, Instant, ALWAYS, NEVER, nextPulse,
+} from "./lib/core.js";
+import { interpret } from "./lib/expr.js";
+import { cronNextAfter } from "./lib/cron.js";
+import { cellSpan as tracksCellSpan } from "./lib/cells.js";
+import { nowTai } from "./lib/timescale.js";
+
+const $ = (id) => document.getElementById(id);
+const COLORS = ["#4cc9f0", "#f4a261", "#7ae582", "#c792ea", "#ff5d8f", "#ffd166"];
+const W = 1000, NOW_X = 0.3, LANE_H = 46;
+const STORE = "ic-explore-tracks-v1";
+const DEFAULTS = ["1/3 x3 @2", "*/5 * * * *", "1/2 x2 & 1/3 x2", "7.5hz"];
+
+const fmtDur = (s) =>
+  s < 0.001 ? `${Math.round(s * 1e6)} µs`
+    : s < 1 ? `${+(s * 1000).toFixed(1)} ms`
+    : s < 120 ? `${+s.toFixed(2)} s`
+    : s < 7200 ? `${+(s / 60).toFixed(1)} min`
+    : `${+(s / 3600).toFixed(1)} h`;
+
+function svgEl(parent, tag, attrs) {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  parent.appendChild(e);
+  return e;
+}
+
+let tracks = [];
+let anim = null;
+
+// ---- per-kind lane builders: each returns a frame(t, t0) updater ----------
+
+function periodicLane(g, obj, color, laneY, T0, pxPerSec, windowSecs) {
+  const cls = obj instanceof Windowed ? obj.cls : obj;
+  const P = cls.period, Pnum = P.toNumber();
+  const y = laneY + 16, h = 22;
+  const inner = svgEl(g, "g", {});
+  let supportRect = null;
+  if (obj instanceof Windowed) {
+    supportRect = svgEl(g, "rect", { y: laneY + 13, height: h + 6,
+      fill: color, opacity: 0.14 });
+  }
+  if (Pnum * pxPerSec < 5) {
+    // below display resolution at this shared scale → honest band
+    const duty = (cls instanceof PhaseClass
+      ? cls.w.div(P)
+      : cls.arcs.reduce((s, a) => s.add(a.w), ZERO).div(P)).toNumber();
+    svgEl(inner, "rect", { x: -60, y, width: W + 120, height: h,
+      fill: color, opacity: (0.2 + 0.55 * duty).toFixed(2) });
+    return (t, t0) => updateSupport(supportRect, obj, t0, pxPerSec);
+  }
+  const arcs = cls instanceof PhaseClass ? [{ s: cls.phi, w: cls.w }] : cls.arcs;
+  const reps = Math.ceil(windowSecs / Pnum) + 2;
+  for (const { s, w } of arcs) {
+    const r0 = s.sub(T0).mod(P).toNumber();
+    const wpx = Math.max(w.toNumber() * pxPerSec, 1.5);
+    for (let k = -1; k < reps; k++) {
+      svgEl(inner, "rect", { x: (r0 + k * Pnum) * pxPerSec, y,
+        width: wpx, height: h, fill: color, opacity: 0.85 });
+    }
+  }
+  return (t, t0) => {
+    inner.setAttribute("transform",
+      `translate(${-t0.sub(T0).mod(P).toNumber() * pxPerSec},0)`);
+    updateSupport(supportRect, obj, t0, pxPerSec);
+  };
+}
+
+function updateSupport(rect, obj, t0, pxPerSec) {
+  if (!rect) return;
+  const sx = Math.max(-10, obj.support.start.sub(t0).toNumber() * pxPerSec);
+  const ex = Math.min(W + 10, obj.support.end.sub(t0).toNumber() * pxPerSec);
+  rect.setAttribute("x", sx);
+  rect.setAttribute("width", Math.max(ex - sx, 0));
+}
+
+function cronLane(g, s, color, laneY, T0init, pxPerSec, windowLen, avgGap) {
+  const y = laneY + 16, h = 22;
+  const inner = svgEl(g, "g", {});
+  let T0 = T0init;
+  let occs = [];
+  let cur = cronNextAfter(s, T0.sub(F(61n)));
+  let guard = 0;
+  const horizon = T0.add(windowLen).add(F(BigInt(Math.round(avgGap))));
+  while (cur && cur.start.lt(horizon) && guard++ < 200) {
+    occs.push(cur);
+    cur = cronNextAfter(s, cur.start);
+  }
+  const addRect = (o) => svgEl(inner, "rect", {
+    x: o.start.sub(T0).toNumber() * pxPerSec, y,
+    width: Math.max(o.end.sub(o.start).toNumber() * pxPerSec, 1.5),
+    height: h, fill: color, opacity: 0.85 });
+  const rebuild = () => { inner.innerHTML = ""; occs.forEach(addRect); };
+  rebuild();
+  return (t, t0) => {
+    const tEnd = t0.add(windowLen);
+    const last = occs[occs.length - 1];
+    if (last && last.start.lt(tEnd.add(F(BigInt(Math.round(avgGap)))))) {
+      const nxt = cronNextAfter(s, last.start);
+      if (nxt) { occs.push(nxt); addRect(nxt); }
+    }
+    const shift = t0.sub(T0).toNumber() * pxPerSec;
+    if (shift > W) {
+      T0 = t0;
+      occs = occs.filter((o) => !o.end.lt(t0));
+      rebuild();
+      inner.setAttribute("transform", "translate(0,0)");
+    } else {
+      inner.setAttribute("transform", `translate(${-shift},0)`);
+    }
+  };
+}
+
+function oneShotLane(g, start, end, color, laneY, pxPerSec) {
+  const rect = svgEl(g, "rect", { y: laneY + 16, height: 22,
+    fill: color, opacity: 0.85 });
+  return (t, t0) => {
+    const sx = start.sub(t0).toNumber() * pxPerSec;
+    const ex = end ? end.sub(t0).toNumber() * pxPerSec : sx + 2;
+    rect.setAttribute("x", sx);
+    rect.setAttribute("width", Math.max(ex - sx, 2));
+  };
+}
+
+function textLane(g, msg, color, laneY) {
+  const t = svgEl(g, "text", { x: W / 2, y: laneY + 31,
+    "text-anchor": "middle", fill: color,
+    "font-size": "13", "font-weight": "700", "letter-spacing": "0.12em" });
+  t.textContent = msg;
+  return () => {};
+}
+
+// natural window (seconds) a track wants, before sharing
+function naturalWindow(obj) {
+  if (obj instanceof PhaseClass || obj instanceof PSet) {
+    return Math.min(Math.max(8 * obj.period.toNumber(), 8), 86400);
+  }
+  if (obj instanceof Windowed) {
+    return Math.min(Math.max(obj.support.duration.toNumber() * 1.5, 8), 86400);
+  }
+  if (obj instanceof Span) {
+    return Math.min(Math.max(obj.duration.toNumber() * 2, 8), 86400);
+  }
+  if (obj?.type === "cell") {
+    try {
+      const sp = tracksCellSpan(obj);
+      return Math.min(Math.max(sp.duration.toNumber() * 2, 8), 86400);
+    } catch { return 8; }
+  }
+  if (obj?.type === "cron" && obj.zone === "UTC") {
+    const t = nowTai();
+    const occ = [];
+    let cur = cronNextAfter(obj, t);
+    for (let i = 0; i < 5 && cur; i++) { occ.push(cur); cur = cronNextAfter(obj, cur.start); }
+    const gaps = occ.slice(1).map((o, i) => o.start.sub(occ[i].start).toNumber());
+    const avg = gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : 3600;
+    return Math.min(Math.max(4 * avg, 120), 86400);
+  }
+  return 8;
+}
+
+function buildAll() {
+  if (anim) { cancelAnimationFrame(anim); anim = null; }
+  const svg = $("lanes");
+  svg.innerHTML = "";
+  const parsed = tracks.map((raw, i) => {
+    try {
+      return { raw, color: COLORS[i % COLORS.length], obj: interpret(raw) };
+    } catch (e) {
+      return { raw, color: COLORS[i % COLORS.length], err: String(e.message || e) };
+    }
+  });
+  const H = 14 + Math.max(parsed.length, 1) * LANE_H + 24;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.style.height = `${H}px`;
+  if (!parsed.length) {
+    $("note").textContent = "— add a track to begin";
+    return;
+  }
+  const windowSecs = Math.max(...parsed.map((p) => (p.obj ? naturalWindow(p.obj) : 8)));
+  const windowLen = Frac.parse(String(Math.round(windowSecs)));
+  const pxPerSec = W / windowSecs;
+  const backOff = windowLen.mul(new Frac(3n, 10n));
+  const T0 = nowTai().sub(backOff);
+  $("note").textContent =
+    `— shared scrolling window of ${fmtDur(windowSecs)} · ${parsed.length} track(s)` +
+    ` · now-marker at 30 %`;
+
+  const framers = [];
+  parsed.forEach((p, i) => {
+    const laneY = 14 + i * LANE_H;
+    const g = svgEl(svg, "g", {});
+    svgEl(svg, "line", { x1: 0, y1: laneY + LANE_H - 4, x2: W, y2: laneY + LANE_H - 4,
+      class: "axis", opacity: 0.4 });
+    const label = svgEl(svg, "text", { x: 4, y: laneY + 10, fill: p.color });
+    label.textContent = p.raw.length > 48 ? p.raw.slice(0, 47) + "…" : p.raw;
+    if (p.err) {
+      framers.push(textLane(g, "cannot draw: " + p.err.slice(0, 60), "#ef4444", laneY));
+      return;
+    }
+    const o = p.obj;
+    if (o === NEVER || o?.type === "never") {
+      framers.push(textLane(g, "NEVER HAPPENS", "#ef4444", laneY));
+    } else if (o === ALWAYS || o?.type === "always") {
+      svgEl(g, "rect", { x: -60, y: laneY + 16, width: W + 120, height: 22,
+        fill: p.color, opacity: 0.35 });
+      framers.push(() => {});
+    } else if (o instanceof PhaseClass || o instanceof PSet || o instanceof Windowed) {
+      framers.push(periodicLane(g, o, p.color, laneY, T0, pxPerSec, windowSecs));
+    } else if (o instanceof Span) {
+      framers.push(oneShotLane(g, o.start, o.end, p.color, laneY, pxPerSec));
+    } else if (o instanceof Instant) {
+      framers.push(oneShotLane(g, o.t, null, p.color, laneY, pxPerSec));
+    } else if (o?.type === "cell") {
+      framers.push(cellLane(g, o, p.color, laneY, pxPerSec));
+    } else if (o?.type === "cron") {
+      if (o.zone !== "UTC") {
+        framers.push(textLane(g, "zone " + o.zone + " — UTC lens only in browser",
+          "#ef4444", laneY));
+      } else {
+        const avg = Math.max(naturalWindow(o) / 4, 60);
+        framers.push(cronLane(g, o, p.color, laneY, T0, pxPerSec, windowLen, avg));
+      }
+    } else {
+      framers.push(textLane(g, "cannot draw this type", "#ef4444", laneY));
+    }
+  });
+
+  // shared chrome: now-marker + edge labels
+  svgEl(svg, "line", { x1: W * NOW_X, y1: 6, x2: W * NOW_X, y2: H - 20,
+    class: "nowline" });
+  const nowLabel = svgEl(svg, "text", { x: W * NOW_X + 6, y: 12, fill: "var(--muted)" });
+  const left = svgEl(svg, "text", { x: 4, y: H - 6, fill: "var(--muted)" });
+  const right = svgEl(svg, "text", { x: W - 190, y: H - 6, fill: "var(--muted)" });
+  left.textContent = `now − ${fmtDur(windowSecs * NOW_X)}`;
+  right.textContent = `now + ${fmtDur(windowSecs * (1 - NOW_X))} (TAI)`;
+
+  let tick = 0;
+  function frame() {
+    const t = nowTai();
+    const t0 = t.sub(backOff);
+    for (const f of framers) f(t, t0);
+    if (tick++ % 6 === 0) {
+      nowLabel.textContent = `now = ${t.toNumber().toFixed(1)} s TAI`;
+    }
+    anim = requestAnimationFrame(frame);
+  }
+  frame();
+}
+
+function cellLane(g, cellObj, color, laneY, pxPerSec) {
+  // symbolic cell → physical span through the UTC lens, drawn as one shot
+  try {
+    const spanOf = tracksCellSpan(cellObj);
+    return oneShotLane(g, spanOf.start, spanOf.end, color, laneY, pxPerSec);
+  } catch (e) {
+    return textLane(g, String(e.message || e).slice(0, 60), "#ef4444", laneY);
+  }
+}
+
+// ---- track management ------------------------------------------------------
+
+function persist() {
+  localStorage.setItem(STORE, JSON.stringify(tracks));
+  history.replaceState(null, "", "#" + encodeURIComponent(tracks.join("\n")));
+}
+
+function renderChips() {
+  const chips = $("chips");
+  chips.innerHTML = "";
+  tracks.forEach((raw, i) => {
+    const chip = document.createElement("span");
+    chip.className = "trackchip";
+    const sw = document.createElement("span");
+    sw.className = "swatch";
+    sw.style.background = COLORS[i % COLORS.length];
+    const label = document.createElement("span");
+    label.textContent = raw;
+    const rm = document.createElement("button");
+    rm.textContent = "×";
+    rm.title = "remove track";
+    rm.onclick = () => {
+      tracks.splice(i, 1);
+      persist();
+      renderChips();
+      buildAll();
+    };
+    chip.append(sw, label, rm);
+    chips.appendChild(chip);
+  });
+}
+
+function addTrack() {
+  const raw = $("input").value.trim();
+  $("error").hidden = true;
+  if (!raw) return;
+  try {
+    interpret(raw); // validate before pinning
+  } catch (e) {
+    $("error").textContent = String(e.message || e);
+    $("error").hidden = false;
+    return;
+  }
+  tracks.push(raw);
+  $("input").value = "";
+  persist();
+  renderChips();
+  buildAll();
+}
+
+$("add").onclick = addTrack;
+$("input").addEventListener("keydown", (e) => { if (e.key === "Enter") addTrack(); });
+
+if (location.hash) {
+  tracks = decodeURIComponent(location.hash.slice(1)).split("\n").filter(Boolean);
+} else {
+  try {
+    tracks = JSON.parse(localStorage.getItem(STORE)) ?? DEFAULTS;
+  } catch { tracks = DEFAULTS; }
+  if (!Array.isArray(tracks) || !tracks.length) tracks = DEFAULTS;
+}
+renderChips();
+buildAll();
+</script>
+</body>
+</html>
