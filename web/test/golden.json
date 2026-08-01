@@ -1,0 +1,339 @@
+{
+ "never": {
+  "name": "ic1:never",
+  "hex": "10",
+  "url": "IC1-20",
+  "alias": "daring-cash-path-improve",
+  "full_alias": [
+   "daring",
+   "cash",
+   "path",
+   "improve",
+   "emotion",
+   "blue",
+   "art",
+   "hub",
+   "insect",
+   "lecture",
+   "toast"
+  ]
+ },
+ "always": {
+  "name": "ic1:always",
+  "hex": "11",
+  "url": "IC1-24",
+  "alias": "shed-fiber-dove-mammal",
+  "full_alias": [
+   "shed",
+   "fiber",
+   "dove",
+   "mammal",
+   "visa",
+   "husband",
+   "cave",
+   "hunt",
+   "better",
+   "copy",
+   "carbon"
+  ]
+ },
+ "instant_third": {
+  "name": "ic1:t:1/3",
+  "hex": "1280000000000000000103",
+  "url": "IC1-2A000000000000010C",
+  "alias": "board-knee-depart-rain",
+  "full_alias": [
+   "board",
+   "knee",
+   "depart",
+   "rain",
+   "grant",
+   "couple",
+   "require",
+   "enable",
+   "erupt",
+   "rabbit",
+   "disagree"
+  ]
+ },
+ "instant_neg": {
+  "name": "ic1:t:-987654321/7",
+  "hex": "127ffffffff797159d0407",
+  "url": "IC1-29ZZZZZZYYBHB7840W",
+  "alias": "struggle-few-bunker-clock",
+  "full_alias": [
+   "struggle",
+   "few",
+   "bunker",
+   "clock",
+   "sweet",
+   "punch",
+   "cube",
+   "duck",
+   "purpose",
+   "artwork",
+   "pool"
+  ]
+ },
+ "span": {
+  "name": "ic1:s:-5/3;22/7",
+  "hex": "137ffffffffffffffe01036515",
+  "url": "IC1-2DZZZZZZZZZZZZG10DJHA",
+  "alias": "fitness-embrace-frame-prize",
+  "full_alias": [
+   "fitness",
+   "embrace",
+   "frame",
+   "prize",
+   "inform",
+   "rival",
+   "enemy",
+   "tunnel",
+   "happy",
+   "south",
+   "settle"
+  ]
+ },
+ "state2of3": {
+  "name": "ic1:c:w=1/3;m=3;phi=2/3",
+  "hex": "143ff00000000000000103030203",
+  "url": "IC1-2GZZ0000000000010C1G40R",
+  "alias": "baby-barely-theory-throw",
+  "full_alias": [
+   "baby",
+   "barely",
+   "theory",
+   "throw",
+   "coast",
+   "love",
+   "patient",
+   "unusual",
+   "shiver",
+   "business",
+   "chunk"
+  ]
+ },
+ "fft_bin": {
+  "name": "ic1:c:w=1/15;m=2;phi=7/90",
+  "hex": "143fc1111111111111010f02075a",
+  "url": "IC1-2GZW248H248H24811W10EPG",
+  "alias": "pear-elite-broccoli-wish",
+  "full_alias": [
+   "pear",
+   "elite",
+   "broccoli",
+   "wish",
+   "swamp",
+   "supreme",
+   "indoor",
+   "engage",
+   "pluck",
+   "grow",
+   "office"
+  ]
+ },
+ "pset": {
+  "name": "ic1:u:P=1;a=0+1/4;a=1/3+1/4",
+  "hex": "153ff00000000000000101020001010401030104",
+  "url": "IC1-2MZZ000000000001041000810G0G6084",
+  "alias": "unfold-impose-crucial-spend",
+  "full_alias": [
+   "unfold",
+   "impose",
+   "crucial",
+   "spend",
+   "cause",
+   "auto",
+   "around",
+   "label",
+   "galaxy",
+   "relief",
+   "asset"
+  ]
+ },
+ "windowed": {
+  "name": "ic1:x:s:0;10|c:w=1/3;m=3;phi=1/3",
+  "hex": "19800000000000000000010a01143ff00000000000000103030103",
+  "url": "IC1-36000000000000000450251ZY0000000000020R3041G",
+  "alias": "cat-verb-waste-vocal",
+  "full_alias": [
+   "cat",
+   "verb",
+   "waste",
+   "vocal",
+   "secret",
+   "gadget",
+   "rocket",
+   "have",
+   "trumpet",
+   "cave",
+   "slow"
+  ]
+ },
+ "cron5": {
+  "name": "ic1:k:0-55/5|*|*|*|*",
+  "hex": "17000000000000000003555443010084210842108421fffffffffffffe1ffe7f",
+  "url": "IC1-2W00000000000003ANA46080GGGGGGGGGGGZZZZZZZZZZZGZZSZG",
+  "alias": "cannon-pumpkin-tongue-umbrella",
+  "full_alias": [
+   "cannon",
+   "pumpkin",
+   "tongue",
+   "umbrella",
+   "rail",
+   "hint",
+   "keep",
+   "street",
+   "essence",
+   "absent",
+   "cover"
+  ]
+ },
+ "cron_tue": {
+  "name": "ic1:k:0|9|*|*|2!America/Chicago",
+  "hex": "1700000000000000000f416d65726963612f4368696361676f010000000000000001000200fffffffe1ffe04",
+  "url": "IC1-2W0000000000000F85PPAWK9CDGJYGV8D5HP2SVF0400000000000080080FZZZZZRFZW10",
+  "alias": "team-trick-voyage-cup",
+  "full_alias": [
+   "team",
+   "trick",
+   "voyage",
+   "cup",
+   "enjoy",
+   "satoshi",
+   "mountain",
+   "cover",
+   "salon",
+   "dice",
+   "snap"
+  ]
+ },
+ "hour_cell": {
+  "name": "ic1:g:2026-08-01T14",
+  "hex": "16800007ea3000804e0303555443d41f08010e",
+  "url": "IC1-2T0001ZA60080KG30DAN8GYM3W4023G",
+  "alias": "poem-aisle-thing-deny",
+  "full_alias": [
+   "poem",
+   "aisle",
+   "thing",
+   "deny",
+   "apology",
+   "embark",
+   "zebra",
+   "square",
+   "gallery",
+   "tag",
+   "grief"
+  ]
+ },
+ "isoweek": {
+  "name": "ic1:g:2026-W31",
+  "hex": "16800007ea6000001f0603555443d41f1f",
+  "url": "IC1-2T0001ZAC00007R60DAN8GYM3WFG",
+  "alias": "toilet-horn-coach-orient",
+  "full_alias": [
+   "toilet",
+   "horn",
+   "coach",
+   "orient",
+   "act",
+   "mixture",
+   "small",
+   "lion",
+   "remember",
+   "pencil",
+   "shadow"
+  ]
+ },
+ "_cron_next": [
+  {
+   "expr": "*/5 * * * *",
+   "from": "1785592837",
+   "occurrences": [
+    [
+     "1785593137",
+     "1785593197"
+    ],
+    [
+     "1785593437",
+     "1785593497"
+    ],
+    [
+     "1785593737",
+     "1785593797"
+    ],
+    [
+     "1785594037",
+     "1785594097"
+    ]
+   ]
+  },
+  {
+   "expr": "0 9 * * 2",
+   "from": "1785592837",
+   "occurrences": [
+    [
+     "1785834037",
+     "1785834097"
+    ],
+    [
+     "1786438837",
+     "1786438897"
+    ],
+    [
+     "1787043637",
+     "1787043697"
+    ],
+    [
+     "1787648437",
+     "1787648497"
+    ]
+   ]
+  },
+  {
+   "expr": "59 23 31 12 *",
+   "from": "1482968437",
+   "occurrences": [
+    [
+     "1483228776",
+     "1483228837"
+    ],
+    [
+     "1514764777",
+     "1514764837"
+    ],
+    [
+     "1546300777",
+     "1546300837"
+    ],
+    [
+     "1577836777",
+     "1577836837"
+    ]
+   ]
+  },
+  {
+   "expr": "0 0 29 2 *",
+   "from": "1785592837",
+   "occurrences": [
+    [
+     "1835395237",
+     "1835395297"
+    ],
+    [
+     "1961625637",
+     "1961625697"
+    ],
+    [
+     "2087856037",
+     "2087856097"
+    ],
+    [
+     "2214086437",
+     "2214086497"
+    ]
+   ]
+  }
+ ]
+}

@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IntervalClock — the live clock</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1><a href="index.html">⏱ IntervalClock</a></h1>
+  <span class="tag">an H3 for time — every interval and phase, named</span>
+  <nav>
+    <a href="index.html" class="active">Clock</a>
+    <a href="playground.html">Playground</a>
+    <a href="docs.html">Protocol</a>
+  </nav>
+</header>
+<main>
+  <div class="panel">
+    <h2>Now, on the physical timeline</h2>
+    <div class="big" id="tai">—</div>
+    <div class="muted">exact rational TAI seconds since 1970-01-01T00:00:00 TAI
+      · civil <span class="mono" id="civil">—</span> UTC
+      · <span id="offset">—</span> s ahead of UTC
+      · sync assumed NTP-disciplined (±100 ms)</div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>The 1/3-second clock — 3 states, modulo math</h2>
+      <div id="wheel3"></div>
+      <div class="omega" id="omega3"></div>
+      <div class="name-line"><span class="lbl">state 2 is</span>
+        <code>ic1:c:w=1/3;m=3;phi=2/3</code></div>
+      <div class="name-line"><span class="lbl">alias</span>
+        <code class="accent" id="alias3">—</code></div>
+      <div class="muted">One revolution per period; the sweep is the phasor.
+        The three siblings partition all of time — children tile the parent,
+        exactly like H3 cells.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Decimal grid — which state of each 10× cycle</h2>
+      <table class="cells mono" id="decimal"></table>
+      <div class="muted">Φ(10ᵏ s, 10): epoch-anchored, one digit per scale.
+        The divisibility lattice has no privileged branching — this is one
+        named chain through it.</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Calendar cells containing this instant (civil lens)</h2>
+    <table class="cells mono" id="cells"></table>
+    <div class="muted">Symbolic names; resolutions are stamped with
+      leap-table + tzdata versions. Leap-second days are 86 401 s and the
+      lens knows it.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Your own grid</h2>
+    <div class="name-line">
+      <span class="lbl">width w</span><input type="text" id="w" value="1/3" style="width:7rem">
+      <span class="lbl">states m</span><input type="text" id="m" value="3" style="width:5rem">
+    </div>
+    <div id="wheelCustom"></div>
+    <div class="omega" id="omegaCustom"></div>
+    <div class="name-line"><span class="lbl">now in</span><code id="customName">—</code></div>
+    <div class="name-line"><span class="lbl">alias</span><code class="accent" id="customAlias">—</code></div>
+    <div class="muted" id="customNote"></div>
+  </div>
+</main>
+<footer>
+  <a href="docs.html">the protocol</a> ·
+  <a href="playground.html">decode anything</a> ·
+  names computed entirely in your browser, byte-identical to the reference
+  implementation
+</footer>
+<script type="module">
+import { Frac, F } from "./lib/rat.js";
+import { nowTai } from "./lib/timescale.js";
+import { phase, stateAt } from "./lib/core.js";
+import { civilUtc } from "./lib/cells.js";
+import { name } from "./lib/names.js";
+import { alias } from "./lib/words.js";
+import { taiMinusUtc, unixFromTai } from "./lib/timescale.js";
+import { makeDial, setModulus, updateDial } from "./lib/dial.js";
+
+const $ = (id) => document.getElementById(id);
+const p2 = (n) => String(n).padStart(2, "0");
+const THIRD = Frac.parse("1/3");
+const ERR = Frac.parse("1/10");
+const TAU = 2 * Math.PI;
+
+const omegaText = (P) => {
+  const w = TAU / P.toNumber();
+  return `ω = 2π/${P} ≈ ${w.toFixed(3)} rad·s⁻¹ · one revolution per ${P} s`;
+};
+
+function isoWeek(y, mo, d) {
+  const date = new Date(Date.UTC(y, mo - 1, d));
+  const day = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - day + 3);
+  const jan4 = new Date(Date.UTC(date.getUTCFullYear(), 0, 4));
+  const week = 1 + Math.round(((date - jan4) / 86400000 - 3 + ((jan4.getUTCDay() + 6) % 7)) / 7);
+  return [date.getUTCFullYear(), week];
+}
+
+// static aliases (registry-free, deterministic)
+$("alias3").textContent = alias(phase(THIRD, 3, { k: 2 }));
+
+const dial3 = makeDial($("wheel3"), 3);
+const P3 = F(1n);
+$("omega3").textContent = omegaText(P3);
+
+const dialCustom = makeDial($("wheelCustom"), 3);
+let customCls = null;
+function refreshCustom() {
+  try {
+    const w = Frac.parse($("w").value);
+    const m = parseInt($("m").value, 10);
+    if (!(m >= 2) || m > 360) throw new Error("need 2 ≤ m ≤ 360");
+    const P = w.mul(F(BigInt(m)));
+    customCls = { w, m, P };
+    setModulus(dialCustom, m);
+    $("omegaCustom").textContent = omegaText(P);
+    $("customNote").textContent =
+      `period ${P} s · siblings partition ALWAYS`;
+  } catch (e) {
+    customCls = null;
+    $("customNote").textContent = String(e.message || e);
+  }
+}
+$("w").addEventListener("input", refreshCustom);
+$("m").addEventListener("input", refreshCustom);
+refreshCustom();
+
+// Smooth sweep: rAF drives the dials at their true angular velocity.
+function frame() {
+  const t = nowTai();
+  updateDial(dial3, t.mod(P3).div(P3).toNumber(), stateAt(THIRD, 3, t, ERR));
+  if (customCls) {
+    const { w, m, P } = customCls;
+    updateDial(dialCustom, t.mod(P).div(P).toNumber(), stateAt(w, m, t, ERR));
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+function tick() {
+  const t = nowTai();
+  const disp = t.d === 1n ? `${t.n}` : t.toNumber().toFixed(3);
+  $("tai").textContent = `${disp} s`;
+  const c = civilUtc(t);
+  $("civil").textContent =
+    `${c.year}-${p2(c.month)}-${p2(c.day)} ${p2(c.hour)}:${p2(c.minute)}:${p2(c.second)}`;
+  $("offset").textContent = taiMinusUtc(unixFromTai(t).unix);
+
+  // decimal grid rows for 10^-1 … 10^3
+  const rows = [];
+  for (const k of [-1, 0, 1, 2, 3]) {
+    const w = k >= 0 ? F(10n ** BigInt(k)) : new Frac(1n, 10n ** BigInt(-k));
+    const s = stateAt(w, 10, t)[0];
+    rows.push(`<tr><td class="muted">w = 10<sup>${k}</sup> s</td>` +
+      `<td><b class="accent">${s}</b> of 10</td>` +
+      `<td class="muted">ic1:c:w=${w};m=10;phi=${w.mul(F(BigInt(s)))}</td></tr>`);
+  }
+  $("decimal").innerHTML = rows.join("");
+
+  // calendar cells
+  const [wy, wn] = isoWeek(c.year, c.month, c.day);
+  const cells = [
+    ["second", `ic1:g:${c.year}-${p2(c.month)}-${p2(c.day)}T${p2(c.hour)}:${p2(c.minute)}:${p2(c.second)}`],
+    ["minute", `ic1:g:${c.year}-${p2(c.month)}-${p2(c.day)}T${p2(c.hour)}:${p2(c.minute)}`],
+    ["hour", `ic1:g:${c.year}-${p2(c.month)}-${p2(c.day)}T${p2(c.hour)}`],
+    ["day", `ic1:g:${c.year}-${p2(c.month)}-${p2(c.day)}`],
+    ["isoweek", `ic1:g:${wy}-W${p2(wn)}`],
+    ["month", `ic1:g:${c.year}-${p2(c.month)}`],
+    ["year", `ic1:g:${c.year}`],
+  ];
+  $("cells").innerHTML = cells.map(([k, n]) =>
+    `<tr><td class="muted">${k}</td><td>${n}</td></tr>`).join("");
+
+  // custom grid names (the dial itself is rAF-driven)
+  if (customCls) {
+    const { w, m } = customCls;
+    const states = stateAt(w, m, t, ERR);
+    const cls = phase(w, m, { k: states[0] });
+    if (cls.type !== "always") {
+      $("customName").textContent = name(cls);
+      $("customAlias").textContent = alias(cls);
+    }
+  }
+}
+tick();
+setInterval(tick, 250);
+</script>
+</body>
+</html>

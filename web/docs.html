@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IntervalClock — the protocol</title>
+<link rel="stylesheet" href="style.css">
+<style>
+main { max-width: 860px; }
+main h1 { font-size: 1.7rem; }
+main h2 { border-bottom: 1px solid var(--panel2); padding-bottom: 0.3rem; margin-top: 2.2rem; }
+main table { border-collapse: collapse; margin: 1rem 0; display: block; overflow-x: auto; }
+main th, main td { border: 1px solid var(--panel2); padding: 0.4rem 0.7rem; text-align: left; }
+main pre { background: var(--panel); border: 1px solid var(--panel2); border-radius: 8px;
+  padding: 0.9rem 1.1rem; overflow-x: auto; }
+main blockquote { border-left: 3px solid var(--accent); margin: 1rem 0; padding: 0.2rem 1rem;
+  color: var(--muted); }
+main code { background: var(--panel2); border-radius: 4px; padding: 0.08em 0.35em; }
+main pre code { background: none; padding: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="index.html">⏱ IntervalClock</a></h1>
+  <span class="tag">the protocol, v1</span>
+  <nav>
+    <a href="index.html">Clock</a>
+    <a href="playground.html">Playground</a>
+    <a href="docs.html" class="active">Protocol</a>
+  </nav>
+</header>
+<main>
+<h1>The IntervalClock Protocol, v1</h1>
+<p><strong>A canonical, globally computable name for every interval and every periodic
+phase class on a shared timeline — an H3 for time.</strong></p>
+<p>H3 gives every hexagon on Earth a canonical hierarchical ID at every
+resolution. This protocol does the same for time: calendar units (hours,
+days, ISO weeks), every possible cron schedule, arbitrary rational periods
+("every 1/3 second", any Hz), and pure periodic signal components — each gets
+exactly one name, computable by anyone, with no registry and no clock.</p>
+<p>Names are pure functions of their parameters. Two implementations on
+opposite sides of the planet compute identical names for identical inputs;
+NTP-style synchronization is needed only to answer "which state are we in
+<em>right now</em>."</p>
+<p>This document is the normative spec. The reference implementation is the
+<code>intervalclock</code> Python package in this repository; the browser core in
+<code>web/ts-core</code> implements the same encodings byte-for-byte.</p>
+<hr />
+<h2>1. The timeline</h2>
+<ul>
+<li><strong>Timescale</strong>: TAI — leap-second free and monotone. Civil time (UTC,
+  zones, calendars) is a <em>lens</em> over this timeline (§5), never the substrate.</li>
+<li><strong>Epoch</strong>: <code>1970-01-01T00:00:00 TAI</code> (the IEEE 1588 / PTP epoch).</li>
+<li><strong>Instants</strong> are exact rational numbers of SI seconds since the epoch.
+  There is <strong>no resolution floor</strong>: 1/3 s is exact, any rational frequency is
+  exact. Irrational periods are <em>rejected, never silently approximated</em> —
+  callers approximate explicitly (e.g. <code>limit_denominator</code>) if they want to.</li>
+<li><strong>Range</strong>: the integer part of any instant must lie in <code>[−2^63, 2^63)</code>
+  seconds (≈ ±292 Gyr; the product intent is ±20 Gyr — Big Bang to far
+  future). Denominators are unbounded.</li>
+<li><strong>Planck time</strong> (~5.39×10⁻⁴⁴ s) is a physical footnote, not a mechanism:
+  it is an empirically measured constant with error bars, so a Planck-based
+  tick could be neither exact nor stable across CODATA revisions. Pure ℚ
+  over the <em>defined</em> SI second is exact forever.</li>
+<li>Nyquist limits are <strong>per-signal</strong>: a capture sampled at rate f_s can
+  honestly name frequency content only up to f_s/2 (§9). There is no global
+  ceiling because there is no global tick.</li>
+</ul>
+<h2>2. Objects and canonical forms</h2>
+<p>Every nameable set of time is exactly one of:</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>NEVER</code></td>
+<td>the empty set</td>
+</tr>
+<tr>
+<td><code>ALWAYS</code></td>
+<td>all of time (the root of every hierarchy)</td>
+</tr>
+<tr>
+<td><code>Instant(t)</code></td>
+<td>one rational point</td>
+</tr>
+<tr>
+<td><code>Span(a, b)</code></td>
+<td>one half-open interval <code>[a, b)</code>, <code>a &lt; b</code></td>
+</tr>
+<tr>
+<td><code>Φ(w, m, φ)</code></td>
+<td><strong>the atom</strong>: one pulse of width <code>w</code> per period <code>P = w·m</code>, forever</td>
+</tr>
+<tr>
+<td><code>PSet(P, arcs)</code></td>
+<td>closure under boolean ops: disjoint arcs on the circle ℝ/P</td>
+</tr>
+<tr>
+<td><code>Cell</code></td>
+<td>a symbolic calendar name (§5)</td>
+</tr>
+<tr>
+<td><code>Cron</code></td>
+<td>a canonical cron disjunction (§6)</td>
+</tr>
+<tr>
+<td><code>Windowed(S, C)</code></td>
+<td>support × class: a phase class restricted to a span (§2.4)</td>
+</tr>
+</tbody>
+</table>
+<h3>2.1 The atom Φ(w, m, φ)</h3>
+<blockquote>
+<p><strong>Φ(w, m, φ) = ⋃ₙ∈ℤ [φ + nP, φ + nP + w)</strong>, with <code>w ∈ ℚ&gt;0</code>, <code>m ∈ ℤ≥2</code>,
+<code>P = w·m</code>, <code>φ ∈ [0, P)</code>, all rationals in lowest terms.</p>
+</blockquote>
+<p>User-facing constructions may use <code>(w, m, state k, offset δ)</code>. Two
+identities make the canonical reduction:</p>
+<ol>
+<li><strong>k absorbs into φ</strong>: <code>L(w, m, k, δ) = L(w, m, 0, δ + k·w)</code>.</li>
+<li><strong>φ wraps</strong>: offsets are meaningful only mod P.</li>
+</ol>
+<p>So <code>φ = (δ + k·w) mod P</code>, and <em>offsets that exceed the period are a
+non-issue by construction</em>. "State 2 of 3" is display sugar, recoverable as
+<code>k = φ/w</code> exactly when φ lies on the w-grid.</p>
+<p><strong>Uniqueness</strong>: for <code>m ≥ 2</code> the point-set determines the parameters — w is
+the length of any maximal component interval, P the spacing of consecutive
+component starts, φ the unique start in <code>[0, P)</code>. Distinct canonical triples
+⇒ distinct sets ⇒ one name per class.</p>
+<p><strong>Mandatory normalizations</strong>: <code>m = 1</code> (or any construction whose pulse
+covers the whole period) → <code>ALWAYS</code>. Empty constructions → <code>NEVER</code>.</p>
+<p><strong>Partition property (the H3-ness)</strong>: the m siblings <code>Φ(w, m, k·w)</code> for
+<code>k = 0…m−1</code> partition all of time. At <code>w = 1/3 s, m = 3</code> these are the three
+states of a 1/3-second clock — modulo math, with φ carrying the phase.</p>
+<h3>2.2 The closure PSet(P, arcs)</h3>
+<p>Phase classes are not closed under ∪/∩/¬. The closure is a period <code>P ∈ ℚ&gt;0</code>
+plus disjoint, non-adjacent arcs <code>(start ∈ [0, P), width ∈ (0, P])</code> on the
+circle ℝ/P, sorted by start (an arc may wrap through 0; adjacent arcs are
+merged).</p>
+<p>Canonical reduction (in order):
+1. Merge/normalize arcs, including wraparound merging.
+2. <strong>Minimize the period</strong>: replace P with the smallest <code>P′ | P</code> under which
+   the arc pattern is shift-invariant.
+3. Full circle → <code>ALWAYS</code>; no arcs → <code>NEVER</code>; a single arc with
+   <code>P′/w ∈ ℤ≥2</code> → the <code>Φ</code> it equals. A single-arc PSet with non-integral
+   <code>P′/w</code> is legal and canonical as PSet.</p>
+<p><strong>Boolean algebra</strong>: to combine periods P₁, P₂, lift both to
+<code>L = lcm(P₁, P₂)</code> using rational lcm <code>lcm(a/b, c/d) = lcm(a,c)/gcd(b,d)</code>,
+unroll arcs, operate on circular interval sets, re-reduce. Exact and
+terminating. <em>Cost warning</em>: L blows up for unrelated periods —
+implementations should expose a complexity measure.</p>
+<h3>2.3 Containment: the divisibility lattice</h3>
+<p>Exact subset predicate for <code>A = Φ(w₁,m₁,φ₁)</code>, <code>B = Φ(w₂,m₂,φ₂)</code>: let
+<code>g = gcd(P₁, P₂)</code> (rational gcd <code>gcd(a/b, c/d) = gcd(ad, cb)/bd</code>); the
+starts of A's pulses taken mod P₂ form the finite orbit
+<code>O = { (φ₁ + j·g) mod P₂ : j = 0 … P₂/g − 1 }</code>. Then</p>
+<blockquote>
+<p><strong>A ⊆ B ⟺ w₁ ≤ w₂ and ∀ r ∈ O: (r − φ₂) mod P₂ ≤ w₂ − w₁.</strong></p>
+</blockquote>
+<p>When <code>P₂ | P₁</code> the orbit is one point and this is the familiar
+"divisibility + compatible offset" rule; the general form also decides
+non-divisible cases exactly. General PSet containment: <code>A∩¬B = ∅</code>.</p>
+<p><strong>Hierarchy axes</strong> (both partition the parent — children tile the parent):
+- <strong>decimate</strong> (period × c): children <code>Φ(w, mc, φ + iP)</code>, i = 0…c−1 —
+  "every c-th occurrence".
+- <strong>duty</strong> (slot ÷ c): children <code>Φ(w/c, mc, φ + i·w/c)</code> — "the c slices of
+  each pulse".</p>
+<p><code>harmonic n</code> of Φ (defined when <code>n | m</code>) is <code>Φ(w, m/n, φ mod P/n)</code> — same
+pulse width, n× frequency, and an <strong>ancestor</strong> (superset). Subharmonics are
+the decimation children.</p>
+<p>Time has no privileged branching factor (7-day weeks vs decimal vs dyadic):
+<strong>the lattice is the invariant; hierarchies are named chains through it.</strong>
+Implementations ship the decimal grid (w = 10^k s, factor-10 subdivision)
+and the calendar lens; other grids are user-definable.</p>
+<h3>2.4 Windowed classes: support × phase</h3>
+<blockquote>
+<p>A time range + an interval describes a pure sinusoid perfectly.</p>
+</blockquote>
+<p><code>Windowed(S, C)</code> = <code>S ∩ C</code> for a Span S and periodic class C: C fixes the
+period and phase alignment (eternal); S fixes the support. <strong>Amplitude is
+measurement data, not identity — it never enters a name.</strong> A pure tone is
+one windowed class plus an amplitude scalar; a sampled signal decomposes
+into windowed classes sharing one support (the capture window) with
+per-class amplitudes; "extend the signal forever" = drop the span.</p>
+<p>Containment is componentwise: <code>(S₁,C₁) ⊆ (S₂,C₂) ⟺ S₁⊆S₂ ∧ C₁⊆C₂</code>; an
+eternal class is the degenerate unbounded-support case. A windowed class no
+pulse of which intersects its support reduces to <code>NEVER</code>.</p>
+<h2>3. Canonical text grammar</h2>
+<p>The structured text name is the authoritative, registry-free canonical form.
+Pretty forms (<code>Φ[w=1/3 s · m=3 · φ=2/3 s] (state 2 of 3)</code>) are display-only.</p>
+<pre><code class="language-ebnf">id      := &quot;ic1:&quot; body
+body    := &quot;never&quot; | &quot;always&quot;
+         | &quot;t:&quot; rat                                  (* instant, TAI s since epoch *)
+         | &quot;s:&quot; rat &quot;;&quot; rat                          (* span start;end *)
+         | &quot;c:&quot; &quot;w=&quot; rat &quot;;m=&quot; posint &quot;;phi=&quot; rat    (* phase class *)
+         | &quot;u:&quot; &quot;P=&quot; rat (&quot;;a=&quot; rat &quot;+&quot; rat)+        (* pset: arcs start+width *)
+         | &quot;g:&quot; cell [&quot;!&quot; zone]                      (* calendar cell, default UTC *)
+         | &quot;k:&quot; cronrec (&quot;+&quot; cronrec)* [&quot;!&quot; zone]    (* cron; &quot;+&quot; joins records *)
+         | &quot;x:&quot; &quot;s:&quot; rat &quot;;&quot; rat &quot;|&quot; clsbody         (* windowed: span | class *)
+         | &quot;f:&quot; …                                    (* reserved: FFT provenance, v2 *)
+clsbody := (&quot;c:&quot; | &quot;u:&quot;) …                           (* as above, without &quot;ic1:&quot; *)
+rat     := [&quot;-&quot;] int [&quot;/&quot; posint]                    (* lowest terms, den &gt; 0 *)
+cell    := yyyy | yyyy&quot;-&quot;mm | yyyy&quot;-&quot;mm&quot;-&quot;dd
+         | yyyy&quot;-&quot;mm&quot;-&quot;dd&quot;T&quot;hh [&quot;:&quot;mm [&quot;:&quot;ss]] | yyyy&quot;-W&quot;ww
+cronrec := field &quot;|&quot; field &quot;|&quot; field &quot;|&quot; field &quot;|&quot; field   (* min|hr|dom|mon|dow *)
+field   := &quot;*&quot; | term (&quot;,&quot; term)*
+term    := int | int&quot;-&quot;int | int&quot;-&quot;int&quot;/&quot;posint
+</code></pre>
+<p>Baked-in canonicalization: rationals in lowest terms with positive
+denominators; <code>phi ∈ [0, P)</code>; no whitespace; cron month/dow names and
+7-as-Sunday normalized to numbers at parse; cron field text is the
+deterministic greedy projection of the bitmask (§6).</p>
+<p>Worked examples (all verified by the reference implementation):</p>
+<table>
+<thead>
+<tr>
+<th>Thing</th>
+<th>Canonical name</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The hour 14:00–15:00 UTC, 2026-08-01</td>
+<td><code>ic1:g:2026-08-01T14</code> → resolves to <code>ic1:s:1785592837;1785596437</code> (UTC−TAI = −37 s)</td>
+</tr>
+<tr>
+<td>ISO week 31 of 2026</td>
+<td><code>ic1:g:2026-W31</code> → <code>ic1:s:1785110437;1785715237</code></td>
+</tr>
+<tr>
+<td>"Every 1/3 s, state 2" (w=1/3, m=3, k=2, δ=0)</td>
+<td><code>ic1:c:w=1/3;m=3;phi=2/3</code></td>
+</tr>
+<tr>
+<td>cron <code>*/5 * * * *</code> (≡ <code>0-59/5</code> ≡ explicit list)</td>
+<td><code>ic1:k:0-55/5\|*\|*\|*\|*</code></td>
+</tr>
+<tr>
+<td>FFT bin at 7.5 Hz, phase π/3, t₀ = epoch</td>
+<td><code>ic1:c:w=1/15;m=2;phi=7/90</code></td>
+</tr>
+</tbody>
+</table>
+<h2>4. Binary encoding</h2>
+<p>A fully fixed-width ID is impossible with unbounded denominators and no
+floor. The layout is <strong>fixed with a variable-length exact tail</strong>:</p>
+<pre><code>[1 byte header: version&lt;&lt;4 | type] [8 bytes big-endian sort key] [LEB128 tail]
+
+types: 0x0 NEVER   0x1 ALWAYS  0x2 INSTANT  0x3 SPAN   0x4 PHASE
+       0x5 PSET    0x6 CELL    0x7 CRON     0x8 FFTCOMP (reserved, v2)
+       0x9 WINDOWED             0xA–0xF reserved
+</code></pre>
+<p>All varints are unsigned LEB128; signed values use zigzag. Rationals are
+<code>num, den</code> pairs in lowest terms.</p>
+<ul>
+<li><strong>INSTANT</strong>: key = <code>uint64be(floor(t) + 2^63)</code> (offset-binary → byte sort
+  is chronological); tail = fractional part <code>num, den</code>.</li>
+<li><strong>SPAN</strong>: key from start as above; tail = start-frac <code>num, den</code>, duration
+  <code>num, den</code>.</li>
+<li><strong>PHASE</strong>: key = IEEE-754 float64 big-endian of P (positive floats byte-
+  compare correctly → classes cluster by period; exact ties break on the
+  canonical tail, deterministically); tail = <code>w.num, w.den, m, φ.num, φ.den</code>.</li>
+<li><strong>PSET</strong>: key = f64be(P); tail = <code>P.num, P.den, arc-count</code>, then per arc
+  <code>start.num, start.den, width.num, width.den</code>.</li>
+<li><strong>CELL</strong>: key = <code>(year+2^31)&lt;&lt;32 | kind&lt;&lt;28 | packed-fields</code> (chronological
+  within kind+zone); body = <code>[1B kind][1B zone-len][zone utf8]</code>,
+  <code>zigzag(year)</code>, then the remaining fields. Kinds: 0 year, 1 month, 2 day,
+  3 hour, 4 minute, 5 second, 6 isoweek.</li>
+<li><strong>CRON</strong>: key = zeros (symbolic); body = <code>[1B zone-len][zone]
+  [1B record-count]</code>, then per record 18 bytes: minute bitmask 8B, hour 3B,
+  dom 4B, month 2B, dow 1B (big-endian, bit index = field value), records
+  sorted by their bytes.</li>
+<li><strong>WINDOWED</strong>: span layout (key + start-frac + duration) followed by the
+  embedded class encoding verbatim.</li>
+<li>Decoders MUST reject 0x8 and unknown types with a "reserved" error, and
+  reject unknown versions.</li>
+</ul>
+<p><strong>URL form</strong>: <code>IC1-</code> + Crockford base32 of the binary ID (left-aligned to a
+5-bit boundary; decoding accepts lowercase and the o/i/l confusables).</p>
+<h2>5. The civil lens (two layers, forced)</h2>
+<p>Calendar units are not fixed-length in physical time: leap-second days are
+86 401 s, DST days 23/25 h, months vary. Worse, <strong>future leap seconds are
+not computable</strong> (IERS announces ~6 months ahead) and tzdata is political.
+Therefore "cron as a TAI phase class" is impossible <em>in principle</em>, and the
+protocol has two layers:</p>
+<ul>
+<li><strong>Layer A (physical)</strong>: Instant/Span/Φ/PSet/Windowed on rational TAI.
+  Eternal, version-free, pure.</li>
+<li><strong>Layer B (civil)</strong>: Cell and Cron are canonical <strong>symbolic</strong> names.
+  <em>Resolving</em> one to a physical Span is a function stamped with
+  <code>(leap-table version, tzdata version)</code>. Same name everywhere; same
+  resolution given the same tables.</li>
+</ul>
+<p>Policies (normative):
+- Leap seconds: exact table from 1972 (Layer A conversion); proleptic 10 s
+  offset before 1972 (the 1958–72 rubber-second era is not modeled). The
+  UTC lens maps 23:59:60 into its day's 86 401-s span.
+- DST spring-forward: nonexistent wall times <strong>raise</strong>; cron occurrences in
+  the gap are <strong>skipped</strong> (Vixie behavior).
+- DST fall-back: ambiguous wall times take the requested fold (PEP 495,
+  default first); cron fires on the <strong>first</strong> occurrence only.
+- ISO weeks: ISO-8601, Monday start, weeks 1–52/53.</p>
+<h2>6. Cron canonicalization</h2>
+<p>Equivalent cron expressions MUST produce identical IDs.</p>
+<ol>
+<li>Parse the five fields (minute, hour, day-of-month, month, day-of-week);
+   fold names (<code>JAN</code>, <code>MON</code>), map dow 7→0; expand <code>*</code>, ranges, lists,
+   <code>/step</code> (a bare <code>N/step</code> extends to the field top, Vixie-style) into
+   per-field <strong>bitsets</strong> (bit index = value).</li>
+<li><strong>Vixie dom/dow quirk</strong>: when both dom and dow are restricted, semantics
+   are OR. Normalize to a disjunction of pure-AND records:
+   <code>(dom restricted, dow=*) ∪ (dom=*, dow restricted)</code>.</li>
+<li>Prune impossible records (e.g. dom ⊆ {30, 31} with month = {2}; Feb 29
+   is possible — leap years exist). All records pruned → <code>NEVER</code>.</li>
+<li>Drop records bitset-subsumed by others; dedupe; sort records by their
+   18-byte encoding. <strong>The sorted bitmask list + zone is the identity.</strong></li>
+<li>Text projection (deterministic greedy per field): full range → <code>*</code>;
+   otherwise repeatedly take the smallest uncovered element and emit the
+   maximal-length arithmetic progression from it within the mask (ties →
+   smallest step; progressions shorter than 3 render as ranges or
+   singletons). <code>*/5</code> in minutes renders <code>0-55/5</code>.</li>
+</ol>
+<h2>7. Word aliases</h2>
+<p>For speech and sharing, not ground truth (a hash of an unbounded ID space
+into fixed tuples cannot be injective).</p>
+<ul>
+<li>Wordlist: the frozen <strong>BIP-39 English list</strong> (2048 words, 11 bits/word,
+  first-four-letters unique), versioned <code>bip39-english-v1</code>.</li>
+<li>Derivation: <code>BLAKE2b(binary ID, digest_size=16, person="ic-alias-v1")</code>
+  → top 121 bits → <strong>11 words</strong>, hyphen-joined.</li>
+<li>The shareable alias is the shortest prefix (≥ 4 words ≈ 44 bits) unique in
+  a <strong>registry</strong> (reference: local SQLite; the row format —
+  <code>full_alias, id_bytes, prefix_len, wordlist</code> — is deliberately simple so
+  registries can federate). Minting is git-short-hash style: a later
+  collision gives the newcomer a longer prefix; <strong>existing aliases never
+  change</strong>, and a previously minted alias keeps resolving to its entry.
+  Expected first 4-word collision ≈ 2^22 ≈ 4M entries per registry.</li>
+</ul>
+<h2>8. The clock</h2>
+<p><code>now()</code> returns <code>(Instant, uncertainty)</code>. The system clock is assumed
+NTP-disciplined; the default uncertainty bound is a conservative 100 ms.
+Near a slot boundary the current state is <em>genuinely ambiguous</em> within the
+sync error: <code>state_at(w, m, t, err)</code> returns one state, or two when t is
+within err of a boundary. The ambiguity is surfaced, never hidden.</p>
+<h2>9. FFT layer (normative here; implemented in v2)</h2>
+<p>The mapping is frozen now so implementations slot in without breaking IDs.</p>
+<ul>
+<li>Bin k of an N-sample capture at rate f_s (rational) starting at t₀ has
+  exact frequency <code>f_k = k·f_s/N</code> and period <code>P = N/(k·f_s)</code>. Its eternal
+  identity is the <strong>positive-half-cycle class</strong>
+  <code>{ t : cos(2πf_k(t−t₀)+θ) &gt; 0 }</code>, which is always exactly</li>
+</ul>
+<blockquote>
+<p><strong>Φ(w = P/2, m = 2, φ = (t₀ − (θ/2π)·P − P/4) mod P)</strong></p>
+</blockquote>
+<p>— "the pulse centered on every peak, as if it continued forever."
+  (A slot width of 1/f_s fails whenever k ∤ N; the half-cycle form never
+  does.) The §3 example: 7.5 Hz, θ = π/3, t₀ = 0 → <code>ic1:c:w=1/15;m=2;phi=7/90</code>,
+  and <code>cos(2π·7.5·t + π/3) = 1</code> exactly at pulse centers (t = 1/9 + n·2/15).
+- Windowed identity: the capture's component is <code>Windowed(capture span, Φ)</code>;
+  amplitude rides alongside as data. The reserved <code>f:</code> text form and 0x8
+  binary type carry provenance <code>(f_s, N, k, t₀, A, θ)</code>.
+- Phases estimated as floats are snapped to a declared quantum
+  (<code>phase_quantum_turns</code>, default 1/2²⁴ turn) — deterministic and part of
+  the provenance. Exact-bin tones only; a non-bin tone leaks across bins,
+  and each bin's name describes <em>the analysis frame's component</em>, not the
+  underlying tone.
+- Edge cases: k = 0 (DC) → <code>ALWAYS</code> + amplitude; k = N/2 → θ ∈ {0, π}.
+- <strong>Nyquist/aliasing</strong> (exact in ℚ): the ceiling is per-signal f_s/2. For
+  f above it, <code>r = f − f_s·round(f/f_s)</code> (half-even), alias frequency
+  <code>|r|</code>, conjugate phase when r &lt; 0. Example: 15/2 Hz sampled at 10 Hz →
+  5/2 Hz, conjugated.</p>
+<h2>10. Schedule inference (normative sketch; implemented in v2)</h2>
+<p>The inverse operation: names → time sets is the forward direction; this is
+observed time sets → names.</p>
+<p><code>infer(timestamps, min_resolution, top_k, candidates=auto)</code> → ranked
+<code>(class, score, matched_fraction, phase_jitter)</code>.</p>
+<ul>
+<li>Events are sparse point processes: fold events over a candidate period
+  lattice (rational periods from min_resolution up to ~span/3) <strong>and over
+  calendar cycles through the lens</strong> (day, ISO week, month, year — months
+  are irregular, so calendar folding must go through Layer B).</li>
+<li>Score by circular concentration (Rayleigh test); phase = circular mean,
+  quantized to min_resolution. Winners that are calendar cycles emit
+  calendar/cron names (<code>"every Tuesday ~09:00"</code>); others emit Φ classes.</li>
+<li>Confidence bounds are normative: min_resolution caps phase precision;
+  observation span and event count cap the longest detectable period and
+  significance. (You cannot claim finer phase than your resolution — the
+  sampling theorem again.)</li>
+</ul>
+<h2>11. Honest limits</h2>
+<ol>
+<li><strong>Countability</strong>: real-parameter intervals are uncountable; any naming
+   scheme is countable. This protocol names exactly the ℚ-parameterized
+   sets — dense in everything, exact for everything a computer, a cron
+   daemon, or an FFT bin can specify — and rejects irrational periods
+   rather than approximating silently.</li>
+<li><strong>Cron ≠ phase class</strong>: future leap seconds are not computable; the
+   two-layer split is forced, not chosen. (An optional idealized
+   "proleptic-UTC" lens, under which any UTC cron is periodic with the
+   400-year Gregorian period of 12 622 780 800 s, may compile cron → PSet
+   in v2 for users who accept the idealization.)</li>
+<li><strong>Fixed width vs exact ℚ</strong>: pick two of {fixed width, exact rationals,
+   no floor}. The encoding keeps exactness and the fixed 9-byte sortable
+   prefix; the tail varies.</li>
+<li><strong>Aliases can't be injective</strong>: registry-relative prefixes, one-way by
+   design.</li>
+<li><strong>Simultaneity</strong>: NTP error makes "the current state" ambiguous within
+   ±err of boundaries; the API surfaces both candidates.</li>
+</ol>
+<h2>12. Versioning</h2>
+<ul>
+<li>Protocol version: the <code>ic1:</code>/<code>IC1-</code> prefix and the header nibble. Breaking
+  changes bump to <code>ic2:</code>.</li>
+<li>Wordlist: <code>bip39-english-v1</code>, frozen.</li>
+<li>Leap table and tzdata versions stamp every civil resolution
+  (<code>resolution_versions()</code>).</li>
+</ul>
+</main>
+<footer>normative source: <code>protocol/PROTOCOL.md</code> — this page is generated
+by <code>web/build_docs.py</code></footer>
+</body>
+</html>

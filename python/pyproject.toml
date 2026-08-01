@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "intervalclock"
+version = "0.1.0"
+description = "H3 for time: canonical names for every interval and periodic phase class"
+readme = "../README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+api = ["fastapi>=0.110", "uvicorn>=0.29"]
+dsp = ["numpy>=1.26"]  # reserved for v2 (from_fft, alias_class)
+dev = ["pytest>=8", "hypothesis>=6"]
+
+[project.scripts]
+intervalclock = "intervalclock.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+intervalclock = ["_wordlist_v1.txt"]

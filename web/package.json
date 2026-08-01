@@ -1,0 +1,9 @@
+{
+  "name": "intervalclock-web",
+  "private": true,
+  "type": "module",
+  "description": "Static site for the IntervalClock protocol: docs, live clock, playground.",
+  "scripts": {
+    "test": "node test/golden.mjs"
+  }
+}

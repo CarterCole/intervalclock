@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IntervalClock — playground</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1><a href="index.html">⏱ IntervalClock</a></h1>
+  <span class="tag">encode / decode playground</span>
+  <nav>
+    <a href="index.html">Clock</a>
+    <a href="playground.html" class="active">Playground</a>
+    <a href="docs.html">Protocol</a>
+  </nav>
+</header>
+<main>
+  <div class="panel">
+    <h2>Paste anything</h2>
+    <input type="text" id="input" spellcheck="false"
+      placeholder="ic1: name · IC1- url · cron like */5 * * * * · period like 1/3 x3 @2 · 7.5hz · 2026-08-01T14">
+    <div class="chips" id="examples"></div>
+    <div class="error" id="error" hidden></div>
+  </div>
+
+  <div class="panel" id="result" hidden>
+    <h2>Canonical identity</h2>
+    <div class="name-line"><span class="lbl">name</span><code id="rName"></code></div>
+    <div class="name-line"><span class="lbl">url</span><code id="rUrl"></code></div>
+    <div class="name-line"><span class="lbl">alias</span><code class="accent" id="rAlias"></code></div>
+    <div class="name-line"><span class="lbl">what</span><span id="rDesc" class="muted"></span></div>
+  </div>
+
+  <div class="panel" id="dialPanel" hidden>
+    <h2>Live phasor — ω = 2π/P, epoch-anchored</h2>
+    <div id="dialHost"></div>
+    <div class="omega" id="dialOmega"></div>
+    <div class="name-line"><span class="lbl">events</span>
+      <code class="muted" id="eventLog">—</code></div>
+    <div class="muted" style="text-align:center">Copy this page's URL to another
+      browser, another machine, another continent: same names, same angle,
+      same events — synced to within each clock's NTP error. No server involved.
+      (This log is a <code>PhaseEmitter</code> dispatching "pulse" events.)</div>
+  </div>
+
+  <div class="panel" id="vizPanel" hidden>
+    <h2>Timeline <span class="muted" id="vizNote"></span></h2>
+    <svg class="timeline" id="viz" preserveAspectRatio="none"></svg>
+    <div class="name-line"><span class="lbl">next</span><code id="rNext" class="muted"></code></div>
+  </div>
+
+  <div class="panel" id="latticePanel" hidden>
+    <h2>Lattice — children tile the parent</h2>
+    <div class="name-line"><span class="lbl">decimate ÷4</span><span class="chips" id="kidsDec"></span></div>
+    <div class="name-line"><span class="lbl">duty ÷3</span><span class="chips" id="kidsDuty"></span></div>
+    <div class="name-line"><span class="lbl">harmonics</span><span class="chips" id="harms"></span></div>
+  </div>
+</main>
+<footer>everything computed client-side · byte-identical to the Python reference ·
+  <a href="docs.html">protocol</a></footer>
+<script type="module">
+import { Frac, F, ZERO } from "./lib/rat.js";
+import {
+  PhaseClass, PSet, Span, Windowed, Instant, ALWAYS, NEVER,
+  phase, nextPulse, pulseCovering, children, harmonics, union, intersect,
+} from "./lib/core.js";
+import { name, parse } from "./lib/names.js";
+import { toUrl, fromUrl } from "./lib/encode.js";
+import { alias } from "./lib/words.js";
+import { fromCron, cronNextAfter } from "./lib/cron.js";
+import { cellSpan } from "./lib/cells.js";
+import { nowTai } from "./lib/timescale.js";
+import { makeDial, setModulus, updateDial, makeArcDial, updateArcDial } from "./lib/dial.js";
+import { remember, resolve, isAliasLike } from "./lib/registry.js";
+import { PhaseEmitter } from "./lib/ticker.js";
+
+const $ = (id) => document.getElementById(id);
+
+const EXAMPLES = [
+  "ic1:c:w=1/3;m=3;phi=2/3",
+  "*/5 * * * *",
+  "7.5hz",
+  "1/3 x3 @2",
+  "1/3 x3 @2 | 1/3 x3 @0",
+  "1/2 x2 & 1/3 x2",
+  "2026-08-01T14 & 7.5hz",
+  "2016-12-31T23:59:60",
+  "0 9 * * TUE",
+];
+
+function atom(raw) {
+  const s = raw.trim();
+  if (!s) throw new Error("");
+  if (s.toUpperCase().startsWith("IC1-")) return fromUrl(s);
+  if (s.startsWith("ic1:")) return parse(s);
+  if (isAliasLike(s)) return parse(resolve(s));
+  const hz = /^(\d+(?:\.\d+)?|\d+\/\d+)\s*hz$/i.exec(s);
+  if (hz) {
+    const f = Frac.parse(hz[1]);
+    const P = F(1n).div(f);
+    const w = P.div(F(2n));
+    return phase(w, 2, {});
+  }
+  const grid = /^(-?[\d./]+)\s*x\s*(\d+)(?:\s*@\s*(\d+))?(?:\s*\+\s*(-?[\d./]+))?$/.exec(s);
+  if (grid) {
+    return phase(Frac.parse(grid[1]), parseInt(grid[2], 10),
+      { k: grid[3] ? parseInt(grid[3], 10) : 0,
+        delta: grid[4] ? Frac.parse(grid[4]) : ZERO });
+  }
+  if (/^\d{4}(-|$)/.test(s)) return parse("ic1:g:" + s);
+  if (s.split(/\s+/).length === 5) return fromCron(s);
+  throw new Error("could not interpret input — try an ic1: name, a cron, '1/3 x3 @2', '7.5hz', a cell, or mix with & and |");
+}
+
+// A cell is symbolic; to mix it, resolve to its physical span (UTC lens).
+function physical(x) {
+  if (x?.type === "cell") return cellSpan(x);
+  if (x?.type === "cron") {
+    throw new Error("cron is symbolic (civil layer) — resolve it via the library/REST, or mix physical classes");
+  }
+  return x;
+}
+
+// Mixing: '|' (union) binds loosest, then '&' (intersection). The algebra
+// closes over PSets; span & class gives a windowed class. Periodic operands
+// are remembered in lastComponents so the phasor panel can show each spinor.
+let lastComponents = [];
+function noteComponent(label, v, op = null) {
+  const c = v instanceof Windowed ? v.cls : v;
+  if (c instanceof PhaseClass) {
+    lastComponents.push({ label: label.trim(), cls: c, op });
+  }
+}
+function interpret(raw) {
+  lastComponents = [];
+  if (raw.includes("|") && raw.trim().startsWith("ic1:")) {
+    const v = atom(raw);                       // x:…|c:… windowed names
+    noteComponent(raw, v);
+    return v;
+  }
+  const unionParts = raw.split("|").map((p) => p.trim()).filter(Boolean);
+  const evalAnd = (part, firstOp) => {
+    const ps = part.split("&").map((q) => q.trim()).filter(Boolean);
+    const vals = ps.map((q, i) => {
+      const v = atom(q);
+      noteComponent(q, v, i === 0 ? firstOp : "&");
+      return v;
+    });
+    if (vals.length === 1) return vals[0];
+    return vals.map(physical).reduce((acc, x) => intersect(acc, x));
+  };
+  if (unionParts.length === 1) return evalAnd(unionParts[0], null);
+  return unionParts
+    .map((p, j) => evalAnd(p, j === 0 ? null : "|"))
+    .map(physical)
+    .reduce((acc, x) => union(acc, x));
+}
+
+function describe(x) {
+  if (x === ALWAYS || x?.type === "always") return "all of time — the root of every hierarchy";
+  if (x === NEVER || x?.type === "never") return "the empty set";
+  if (x instanceof PhaseClass) {
+    const st = x.state;
+    return `Φ: one ${x.w}-second pulse every ${x.period} s, forever` +
+      (st !== null ? ` — state ${st} of ${x.m}` : "") +
+      ` — frequency ${F(1n).div(x.period)} Hz`;
+  }
+  if (x instanceof PSet) return `periodic set: ${x.arcs.length} arc(s) on a ${x.period}-second circle`;
+  if (x instanceof Span) return `one-shot interval, ${x.duration} s long`;
+  if (x instanceof Instant) return "a single rational instant";
+  if (x instanceof Windowed) return `a phase class with support — a pure tone's identity (amplitude is data, not identity)`;
+  if (x?.type === "cron") return `canonical cron, ${x.records.length} record(s), zone ${x.zone} — equivalent expressions share this ID`;
+  if (x?.type === "cell") return `symbolic calendar cell (${x.kind}, ${x.zone}) — resolution is table-versioned`;
+  return "";
+}
+
+// The timeline is an infinite conveyor: the now-marker is fixed and the
+// pulse train scrolls left underneath it, slices entering from the right.
+//
+// Performance contract (no glitching, no growth): the train is drawn ONCE
+// into a <g>, and each animation frame only sets a transform on it — a
+// periodic train translated modulo its period is indistinguishable from a
+// truly infinite one, and the svg's overflow clips the edges. Text readouts
+// update at ~10 Hz with tabular numerals so nothing reflows at 60 fps.
+let timelineAnim = null;
+
+const fmtDur = (s) =>
+  s < 0.001 ? `${Math.round(s * 1e6)} µs`
+    : s < 1 ? `${+(s * 1000).toFixed(1)} ms`
+    : s < 120 ? `${+s.toFixed(2)} s`
+    : s < 7200 ? `${+(s / 60).toFixed(1)} min`
+    : `${+(s / 3600).toFixed(1)} h`;
+
+function svgEl(svg, tag, attrs) {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  svg.appendChild(e);
+  return e;
+}
+
+const W = 1000, H = 84, AXIS_Y = 60, NOW_X = 0.3;
+
+function timelineScaffold(windowSecs) {
+  const svg = $("viz");
+  svg.innerHTML = "";
+  if (timelineAnim) { cancelAnimationFrame(timelineAnim); timelineAnim = null; }
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svgEl(svg, "line", { x1: 0, y1: AXIS_Y, x2: W, y2: AXIS_Y, class: "axis" });
+  const band = svgEl(svg, "g", {});
+  svgEl(svg, "line", { x1: W * NOW_X, y1: 8, x2: W * NOW_X, y2: AXIS_Y + 6, class: "nowline" });
+  const nowLabel = svgEl(svg, "text", { x: W * NOW_X + 6, y: 16 });
+  const leftLabel = svgEl(svg, "text", { x: 4, y: H - 6 });
+  const rightLabel = svgEl(svg, "text", { x: W - 190, y: H - 6 });
+  // Window edges are fixed offsets from the now-marker → static labels.
+  leftLabel.textContent = `now − ${fmtDur(windowSecs * NOW_X)}`;
+  rightLabel.textContent = `now + ${fmtDur(windowSecs * (1 - NOW_X))} (TAI)`;
+  return { svg, band, nowLabel };
+}
+
+function nextText(t, first, iterate) {
+  const items = [];
+  let cur = first;
+  for (let i = 0; i < 3 && cur; i++) {
+    const dt = Math.max(cur.start.sub(t).toNumber(), 0);
+    items.push(i === 0
+      ? `in ${fmtDur(dt)} → [${cur.start}, ${cur.end})`
+      : `in ${fmtDur(dt)}`);
+    cur = iterate(cur);
+  }
+  return items.join("  ·  ");
+}
+
+function draw(x) {
+  // Always retire the previous animation and note first, so a result with
+  // no timeline (never, a span, an error) can't leave a stale one spinning.
+  if (timelineAnim) { cancelAnimationFrame(timelineAnim); timelineAnim = null; }
+  $("vizNote").textContent = "";
+  if (x?.type === "cron") return drawCron(x);
+  if (x === NEVER || x?.type === "never") {
+    const { svg } = timelineScaffold(8);
+    const t = svgEl(svg, "text", {
+      x: W / 2, y: 44, "text-anchor": "middle", class: "never",
+    });
+    t.textContent = "NEVER HAPPENS";
+    $("vizNote").textContent =
+      "— the empty set: these operands never coincide " +
+      "(distinct states of one grid are disjoint siblings)";
+    $("rNext").textContent = "never";
+    return true;
+  }
+  if (x === ALWAYS || x?.type === "always") {
+    const { band } = timelineScaffold(8);
+    svgEl(band, "rect", { x: -60, y: 20, width: W + 120, height: AXIS_Y - 20,
+      class: "pulse", opacity: 0.5 });
+    $("vizNote").textContent = "— all of time, continuously";
+    $("rNext").textContent = "always";
+    return true;
+  }
+  const cls = x instanceof Windowed ? x.cls : x;
+  if (!(cls instanceof PhaseClass || cls instanceof PSet)) {
+    if (x?.type === "cell") {
+      try {
+        const sp = cellSpan(x);
+        $("vizNote").textContent = `— resolves to ${name(sp)} (${sp.duration} s)`;
+      } catch (e) { $("vizNote").textContent = `— ${e.message}`; }
+      return false;
+    }
+    return false;
+  }
+  const P = cls.period;
+  // Reasonable scale: at least 8 periods AND at least 8 s of timeline, so
+  // fast classes don't blur past; capped at a day, since nothing slower
+  // visibly scrolls anyway.
+  let windowLen = P.mul(F(8n));
+  if (windowLen.lt(F(8n))) windowLen = F(8n);
+  if (F(86400n).lt(windowLen)) windowLen = F(86400n);
+  const windowSecs = windowLen.toNumber();
+  const pxPerSec = W / windowSecs;
+  const periodsPerWindow = windowLen.div(P).toNumber();
+  // Display has its own Nyquist: below ~5 px per period the pulse train
+  // can't be rendered faithfully — show a continuous band instead.
+  const bandMode = W / periodsPerWindow < 5;
+  $("vizNote").textContent = bandMode
+    ? `— window of ${fmtDur(windowSecs)}: ${Math.round(periodsPerWindow)} periods ` +
+      `is below display resolution, showing the train as a band`
+    : `— scrolling window of ${fmtDur(windowSecs)} ` +
+      `(${Math.round(periodsPerWindow)} periods) · pulses slide left as time passes`;
+
+  const { band, nowLabel } = timelineScaffold(windowSecs);
+  const supportRect = x instanceof Windowed
+    ? svgEl($("viz"), "rect", { y: 12, height: AXIS_Y - 12, class: "support" })
+    : null;
+
+  // Build the train ONCE, anchored at T0's window start; frames only slide it.
+  const backOff = windowLen.mul(new Frac(3n, 10n));
+  const T0 = nowTai().sub(backOff);
+  if (bandMode) {
+    const duty = (cls instanceof PhaseClass
+      ? cls.w.div(P)
+      : cls.arcs.reduce((s, a) => s.add(a.w), ZERO).div(P)).toNumber();
+    svgEl(band, "rect", { x: -60, y: 20, width: W + 120, height: AXIS_Y - 20,
+      class: "pulse", opacity: (0.25 + 0.6 * duty).toFixed(2) });
+  } else {
+    const Pnum = P.toNumber();
+    const arcs = cls instanceof PhaseClass
+      ? [{ s: cls.phi, w: cls.w }] : cls.arcs;
+    const reps = Math.ceil(windowSecs / Pnum) + 2;
+    for (const { s, w } of arcs) {
+      const r0 = s.sub(T0).mod(P).toNumber();
+      const wpx = Math.max(w.toNumber() * pxPerSec, 1.5);
+      for (let k = -1; k < reps; k++) {
+        svgEl(band, "rect", { x: (r0 + k * Pnum) * pxPerSec, y: 20,
+          width: wpx, height: AXIS_Y - 20, class: "pulse" });
+      }
+    }
+  }
+
+  let textTick = 0;
+  function frame() {
+    const t = nowTai();
+    const t0 = t.sub(backOff);
+    // periodic translate: exact modulo, then one float — seamless forever
+    const shift = t0.sub(T0).mod(P).toNumber() * pxPerSec;
+    band.setAttribute("transform", `translate(${-shift},0)`);
+    if (supportRect) {
+      const sx = Math.max(0, x.support.start.sub(t0).toNumber() * pxPerSec);
+      const ex = Math.min(W, x.support.end.sub(t0).toNumber() * pxPerSec);
+      supportRect.setAttribute("x", sx);
+      supportRect.setAttribute("width", Math.max(ex - sx, 0));
+    }
+    if (textTick++ % 6 === 0) {
+      nowLabel.textContent = `now = ${t.toNumber().toFixed(1)} s TAI`;
+      $("rNext").textContent =
+        nextText(t, nextPulse(cls, t), (cur) => nextPulse(cls, cur.start));
+    }
+    timelineAnim = requestAnimationFrame(frame);
+  }
+  frame();
+  return true;
+}
+
+// Cron conveyor: occurrences aren't periodic (civil lens), so we keep a
+// BOUNDED cache of upcoming firings — topped up as the window advances,
+// pruned and re-anchored whenever the train has scrolled one window-width,
+// so neither the cache nor the DOM ever grows.
+function drawCron(s) {
+  if (s.zone !== "UTC") {
+    $("vizNote").textContent =
+      `— zone ${s.zone}: the browser resolves UTC crons only; use the Python library or REST API`;
+    $("rNext").textContent = "—";
+    return true;
+  }
+  const t = nowTai();
+  let occs = [];
+  let cur = cronNextAfter(s, t);
+  for (let i = 0; i < 9 && cur; i++) { occs.push(cur); cur = cronNextAfter(s, cur.start); }
+  if (!occs.length) {
+    $("vizNote").textContent = "— no occurrences in the next 5 years";
+    $("rNext").textContent = "—";
+    return true;
+  }
+  const gaps = occs.slice(1).map((o, i) => o.start.sub(occs[i].start).toNumber());
+  const avgGap = gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : 3600;
+  const windowSecs = Math.min(Math.max(8 * avgGap, 120), 86400);
+  const windowLen = new Frac(BigInt(Math.round(windowSecs)));
+  const pxPerSec = W / windowSecs;
+  $("vizNote").textContent =
+    `— UTC lens · avg gap ${fmtDur(avgGap)} · scrolling window of ${fmtDur(windowSecs)} ` +
+    `· each pulse is the fired minute`;
+
+  const { band, nowLabel } = timelineScaffold(windowSecs);
+  const backOff = windowLen.mul(new Frac(3n, 10n));
+
+  // seed backwards so pulses already left of the now-marker appear
+  const t0seed = t.sub(backOff).sub(F(61n));
+  let back = cronNextAfter(s, t0seed);
+  const before = [];
+  let guard = 0;
+  while (back && back.start.lt(occs[0].start) && guard++ < 100) {
+    before.push(back);
+    back = cronNextAfter(s, back.start);
+  }
+  occs = [...before, ...occs];
+
+  let T0 = t.sub(backOff);
+  function rebuild() {
+    band.innerHTML = "";
+    for (const o of occs) {
+      svgEl(band, "rect", {
+        x: o.start.sub(T0).toNumber() * pxPerSec, y: 20,
+        width: Math.max(o.end.sub(o.start).toNumber() * pxPerSec, 1.5),
+        height: AXIS_Y - 20, class: "pulse" });
+    }
+  }
+  rebuild();
+
+  let textTick = 0;
+  function frame() {
+    const t = nowTai();
+    const t0 = t.sub(backOff);
+    const tEnd = t0.add(windowLen);
+    // top up ahead of the right edge (amortized: ≤ 1 fetch per frame)
+    const last = occs[occs.length - 1];
+    if (last && last.start.lt(tEnd.add(F(BigInt(Math.round(avgGap)))))) {
+      const nxt = cronNextAfter(s, last.start);
+      if (nxt) {
+        occs.push(nxt);
+        svgEl(band, "rect", {
+          x: nxt.start.sub(T0).toNumber() * pxPerSec, y: 20,
+          width: Math.max(nxt.end.sub(nxt.start).toNumber() * pxPerSec, 1.5),
+          height: AXIS_Y - 20, class: "pulse" });
+      }
+    }
+    const shift = t0.sub(T0).toNumber() * pxPerSec;
+    if (shift > W) {
+      // re-anchor: prune expired occurrences, redraw the bounded remainder
+      T0 = t0;
+      occs = occs.filter((o) => !o.end.lt(t0));
+      rebuild();
+      band.setAttribute("transform", "translate(0,0)");
+    } else {
+      band.setAttribute("transform", `translate(${-shift},0)`);
+    }
+    if (textTick++ % 6 === 0) {
+      nowLabel.textContent = `now = ${t.toNumber().toFixed(1)} s TAI`;
+      const first = occs.find((o) => o.start.cmp(t) > 0);
+      if (first) {
+        $("rNext").textContent =
+          nextText(t, first, (c) => occs.find((o) => o.start.cmp(c.start) > 0) ?? cronNextAfter(s, c.start));
+      }
+    }
+    timelineAnim = requestAnimationFrame(frame);
+  }
+  frame();
+  return true;
+}
+
+function lattice(x) {
+  if (!(x instanceof PhaseClass)) return false;
+  const chip = (obj) => {
+    const b = document.createElement("button");
+    b.className = "chip";
+    b.textContent = name(obj);
+    b.onclick = () => { $("input").value = name(obj); run(); };
+    return b;
+  };
+  const dec = $("kidsDec"); dec.innerHTML = "";
+  children(x, 4, "decimate").forEach((k) => dec.appendChild(chip(k)));
+  const duty = $("kidsDuty"); duty.innerHTML = "";
+  children(x, 3, "duty").forEach((k) => duty.appendChild(chip(k)));
+  const h = $("harms"); h.innerHTML = "";
+  let any = false;
+  for (let n = 2; n <= x.m; n++) {
+    if (x.m % n === 0) {
+      const hn = harmonics(x, n);
+      if (hn.type !== "always") { h.appendChild(chip(hn)); any = true; }
+    }
+  }
+  if (!any) h.innerHTML = '<span class="muted">m is prime with no proper harmonics — decimate first</span>';
+  return true;
+}
+
+// Live phasors — the sync demo. A mixed expression (A & B, A | B) shows one
+// spinor per periodic operand, each sweeping at its own ω; the composite
+// class drives the event log.
+let liveDials = [];
+let emitter = null;
+function showDial(x) {
+  if (emitter) { emitter.stop(); emitter = null; }
+  liveDials = [];
+  const comps = lastComponents
+    .filter((c) => c.cls instanceof PhaseClass && c.cls.m <= 60)
+    .slice(0, 3);
+  if (!comps.length) return false;
+  const host = $("dialHost");
+  host.innerHTML = "";
+  host.className = "";
+  const row = document.createElement("div");
+  row.className = "dialrow";
+  host.appendChild(row);
+  const size = comps.length > 1 ? 150 : 190;
+  for (const c of comps) {
+    if (c.op) {
+      const op = document.createElement("div");
+      op.className = "opglyph";
+      op.textContent = c.op;
+      row.appendChild(op);
+    }
+    const col = document.createElement("div");
+    col.className = "dialcol";
+    const holder = document.createElement("div");
+    col.appendChild(holder);
+    const cap = document.createElement("div");
+    cap.className = "dialcap";
+    cap.textContent =
+      `${c.label} · ω ≈ ${(2 * Math.PI / c.cls.period.toNumber()).toFixed(2)} rad/s`;
+    col.appendChild(cap);
+    row.appendChild(col);
+    const d = makeDial(holder, c.cls.m, { size });
+    const phi0 = c.cls.phi.mod(c.cls.w);
+    const own = Number(c.cls.phi.sub(phi0).div(c.cls.w).n);
+    d.labels.forEach((l, i) => l.classList.toggle("own", i === own));
+    liveDials.push({ kind: "grid", d, cls: c.cls, phi0 });
+  }
+  const cx = x instanceof Windowed ? x.cls : x;
+  const composite = cx instanceof PhaseClass || cx instanceof PSet ? cx : null;
+  // The "sum" row: what the expression works out to, live.
+  const single = comps.length === 1 && composite instanceof PhaseClass
+    && composite.eq(comps[0].cls);
+  if (!single) {
+    const sum = document.createElement("div");
+    sum.className = "sumrow";
+    const eq = document.createElement("div");
+    eq.className = "eq";
+    eq.textContent = "=";
+    sum.appendChild(eq);
+    if (composite) {
+      const holder = document.createElement("div");
+      sum.appendChild(holder);
+      const P = composite.period;
+      const arcs = composite instanceof PhaseClass
+        ? [{ s: composite.phi, w: composite.w }] : composite.arcs;
+      const degs = arcs.map(({ s, w }) => {
+        const a0 = s.div(P).toNumber() * 360;
+        return [a0, a0 + w.div(P).toNumber() * 360];
+      });
+      const d = makeArcDial(holder, degs, { size: 150 });
+      liveDials.push({ kind: "arc", d, cls: composite });
+      const cap = document.createElement("div");
+      cap.className = "dialcap";
+      cap.textContent = `${name(x)} · P = ${P} s`;
+      sum.appendChild(cap);
+    } else if (x === NEVER || x?.type === "never") {
+      const nv = document.createElement("div");
+      nv.className = "sumnever";
+      nv.textContent = "∅ NEVER HAPPENS";
+      sum.appendChild(nv);
+    } else {
+      const cap = document.createElement("div");
+      cap.className = "dialcap";
+      cap.textContent = name(x);
+      sum.appendChild(cap);
+    }
+    host.appendChild(sum);
+  }
+  if (comps.length === 1 && composite instanceof PhaseClass) {
+    const { cls } = comps[0];
+    const phi0 = cls.phi.mod(cls.w);
+    const own = Number(cls.phi.sub(phi0).div(cls.w).n);
+    $("dialOmega").textContent =
+      `ω = 2π/${cls.period} ≈ ${(2 * Math.PI / cls.period.toNumber()).toFixed(3)} rad·s⁻¹` +
+      ` · this class is sector ${own}` +
+      (phi0.isZero() ? "" : ` · grid anchor δ = ${phi0} s`);
+  } else {
+    $("dialOmega").textContent =
+      `${comps.length} spinors, each at its own ω` +
+      (composite ? ` · composite period ${composite.period} s` : "");
+  }
+  // EventEmitter-style live log on the composite class.
+  const log = [];
+  if (composite && composite.period.toNumber() >= 0.2) {
+    emitter = new PhaseEmitter(composite);
+    emitter.addEventListener("pulse", (e) => {
+      log.push(`[${e.detail.start}, ${e.detail.end})`);
+      if (log.length > 3) log.shift();
+      $("eventLog").textContent = log.join("  ·  ");
+    });
+    $("eventLog").textContent = "…";
+  } else {
+    $("eventLog").textContent = composite
+      ? "(period < 0.2 s — too fast to log)" : "—";
+  }
+  return true;
+}
+
+function dialFrame() {
+  if (liveDials.length && !$("dialPanel").hidden) {
+    const t = nowTai();
+    for (const entry of liveDials) {
+      const { d, cls } = entry;
+      const P = cls.period;
+      if (entry.kind === "arc") {
+        // composite dial: arcs painted in epoch coordinates, sweep at ω
+        updateArcDial(d, t.mod(P).div(P).toNumber(), cls.contains(t));
+      } else {
+        const { phi0 } = entry;
+        const frac = t.sub(phi0).mod(P).div(P).toNumber();
+        const slot = t.sub(phi0).div(cls.w).floor();
+        const mm = BigInt(cls.m);
+        updateDial(d, frac, [Number(((slot % mm) + mm) % mm)]);
+      }
+    }
+  }
+  requestAnimationFrame(dialFrame);
+}
+requestAnimationFrame(dialFrame);
+
+function run(pushHash = true) {
+  const raw = $("input").value;
+  $("error").hidden = true;
+  try {
+    const x = interpret(raw);
+    $("result").hidden = false;
+    $("rName").textContent = name(x);
+    $("rUrl").textContent = toUrl(x);
+    $("rAlias").textContent = alias(x);
+    remember(x, name(x)); // its alias now resolves in this browser
+    $("rDesc").textContent = describe(x);
+    $("dialPanel").hidden = !showDial(x);
+    $("vizPanel").hidden = !draw(x) && !$("vizNote").textContent;
+    $("latticePanel").hidden = !lattice(x);
+    if (pushHash) history.replaceState(null, "", "#" + encodeURIComponent(raw));
+  } catch (e) {
+    if (raw.trim()) {
+      $("error").textContent = String(e.message || e);
+      $("error").hidden = false;
+    }
+    $("result").hidden = true;
+    $("dialPanel").hidden = true;
+    $("vizPanel").hidden = true;
+    $("latticePanel").hidden = true;
+  }
+}
+
+$("input").addEventListener("input", () => run());
+for (const ex of EXAMPLES) {
+  const b = document.createElement("button");
+  b.className = "chip";
+  b.textContent = ex;
+  b.onclick = () => { $("input").value = ex; run(); };
+  $("examples").appendChild(b);
+}
+// Pre-seed the local alias registry with the example objects, so their
+// aliases are paste-able immediately.
+for (const ex of EXAMPLES) {
+  try {
+    const x = interpret(ex);
+    remember(x, name(x));
+  } catch { /* symbolic-only examples are fine */ }
+}
+
+// Deep links: the URL fragment carries the expression, so a copied link
+// reproduces the same object — and its dial angle — anywhere.
+$("input").value = location.hash
+  ? decodeURIComponent(location.hash.slice(1))
+  : EXAMPLES[0];
+run(false);
+window.addEventListener("hashchange", () => {
+  if (location.hash) {
+    $("input").value = decodeURIComponent(location.hash.slice(1));
+    run(false);
+  }
+});
+</script>
+</body>
+</html>

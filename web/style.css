@@ -1,0 +1,201 @@
+:root {
+  --bg: #0b0e14;
+  --panel: #141a24;
+  --panel2: #1a2231;
+  --text: #e6edf3;
+  --muted: #8b98a9;
+  --accent: #4cc9f0;
+  --accent2: #f4a261;
+  --good: #7ae582;
+  --mono: "SF Mono", ui-monospace, "Cascadia Code", Menlo, monospace;
+  --sans: -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f8fa;
+    --panel: #ffffff;
+    --panel2: #eef2f6;
+    --text: #1c2733;
+    --muted: #5b6b7c;
+    --accent: #0077b6;
+    --accent2: #d1495b;
+    --good: #2d9e44;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  line-height: 1.55;
+}
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 1.5rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--panel2);
+  flex-wrap: wrap;
+}
+header h1 { margin: 0; font-size: 1.25rem; letter-spacing: 0.02em; }
+header h1 a { color: var(--text); text-decoration: none; }
+header .tag { color: var(--muted); font-size: 0.85rem; }
+nav { margin-left: auto; display: flex; gap: 1rem; }
+nav a { color: var(--accent); text-decoration: none; font-size: 0.95rem; }
+nav a.active { color: var(--text); border-bottom: 2px solid var(--accent); }
+main { max-width: 1080px; margin: 0 auto; padding: 1.5rem; }
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--panel2);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+  overflow-x: auto;
+}
+.panel h2 { margin: 0 0 0.75rem; font-size: 1rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+code, .mono { font-family: var(--mono); font-size: 0.92em; }
+.big { font-size: 1.6rem; font-family: var(--mono); }
+.muted { color: var(--muted); }
+.accent { color: var(--accent); }
+.name-line { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; margin: 0.25rem 0; }
+.name-line .lbl { color: var(--muted); min-width: 4.5rem; font-size: 0.85rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.25rem; }
+.dialwrap { display: flex; justify-content: center; margin: 0.8rem 0; }
+.dial { position: relative; border-radius: 50%; flex: none; }
+.dial .sectors, .dial .sweep {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+}
+.dial .sectors { border: 1px solid var(--panel2); }
+.dial .sweep {
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 200deg,
+    color-mix(in srgb, var(--accent) 10%, transparent) 260deg,
+    color-mix(in srgb, var(--accent) 55%, transparent) 355deg,
+    var(--accent) 360deg
+  );
+  will-change: transform;
+}
+.dial .hub {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 44%;
+  height: 44%;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 1px solid var(--panel2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  z-index: 2;
+}
+.dial .hub .state { font-size: 1.7rem; font-weight: 700; color: var(--accent); line-height: 1.1; }
+.dial .hub .of { font-size: 0.75rem; color: var(--muted); }
+.dial .seclabel {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--muted);
+  z-index: 1;
+  pointer-events: none;
+}
+.dial .seclabel.on { color: var(--text); font-weight: 700; }
+.dial .seclabel.own { color: var(--accent2); }
+.dialrow { display: flex; gap: 1.2rem; justify-content: center; align-items: center; flex-wrap: wrap; margin: 0.8rem 0; }
+.opglyph {
+  font-family: var(--mono);
+  font-size: 2.2rem;
+  font-weight: 700;
+  color: var(--accent2);
+  align-self: center;
+  padding: 0 0.2rem;
+  margin-bottom: 1.4rem; /* optically center against the dials, not captions */
+}
+.sumrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--panel2);
+}
+.sumrow .eq { font-family: var(--mono); font-size: 1.4rem; color: var(--muted); }
+.sumnever {
+  color: #ef4444;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 1.2rem;
+  letter-spacing: 0.12em;
+}
+.dialcol { display: flex; flex-direction: column; align-items: center; }
+.dialcap {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 0.4rem;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* live countdown/event text: fixed-width digits, no wrap → no layout churn */
+#rNext, #eventLog, svg.timeline text {
+  font-variant-numeric: tabular-nums;
+}
+#rNext, #eventLog {
+  display: block;
+  white-space: nowrap;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.omega { text-align: center; color: var(--muted); font-family: var(--mono); font-size: 0.85rem; margin-top: 0.4rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.5rem 0; }
+.chip {
+  background: var(--panel2);
+  border: none;
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.chip:hover { outline: 1px solid var(--accent); }
+input[type="text"] {
+  width: 100%;
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0.7rem 0.9rem;
+  font-family: var(--mono);
+  font-size: 1rem;
+}
+input[type="text"]:focus { outline: none; border-color: var(--accent); }
+svg.timeline { width: 100%; height: 84px; display: block; margin-top: 0.5rem; }
+svg.timeline rect.pulse { fill: var(--accent); opacity: 0.85; }
+svg.timeline rect.support { fill: var(--accent2); opacity: 0.25; }
+svg.timeline line.axis { stroke: var(--muted); stroke-width: 1; }
+svg.timeline line.nowline { stroke: var(--accent2); stroke-width: 2; }
+svg.timeline text { fill: var(--muted); font-family: var(--mono); font-size: 10px; }
+svg.timeline text.never {
+  fill: #ef4444;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+.error { color: var(--accent2); font-family: var(--mono); }
+table.cells { border-collapse: collapse; width: 100%; }
+table.cells td { padding: 0.3rem 0.6rem 0.3rem 0; vertical-align: baseline; }
+footer { text-align: center; color: var(--muted); font-size: 0.85rem; padding: 2rem 0; }
+footer a { color: var(--accent); }
