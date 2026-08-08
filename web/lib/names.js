@@ -8,6 +8,29 @@ import {
 } from "./core.js";
 import { cellText, parseCell } from "./cells.js";
 import { cronName, parseCronBody } from "./cron.js";
+import { ampFromHex, ampHex, fftComponent } from "./fft.js";
+
+// f: field order is canonical, not optional — unlike c:, which tolerates
+// reordering, an f: record has exactly one spelling.
+const FFT_FIELDS = ["fs", "N", "k", "t0", "A", "th", "q"];
+
+function parseFftBody(rest) {
+  const parts = rest.split(";");
+  if (parts.length !== FFT_FIELDS.length) {
+    throw new Error(`f: needs fields ${FFT_FIELDS.map((k) => k + "=").join(";")}`);
+  }
+  const v = {};
+  parts.forEach((part, i) => {
+    const key = FFT_FIELDS[i];
+    if (!part.startsWith(key + "=")) throw new Error(`f: expected ${key}= here`);
+    v[key] = part.slice(key.length + 1);
+  });
+  return fftComponent({
+    fs: Frac.parse(v.fs), N: parseInt(v.N, 10), k: parseInt(v.k, 10),
+    t0: Frac.parse(v.t0), A: ampFromHex(v.A),
+    th: Frac.parse(v.th), q: Frac.parse(v.q),
+  });
+}
 
 export function name(x) {
   if (x === NEVER || x?.type === "never") return "ic1:never";
@@ -23,6 +46,10 @@ export function name(x) {
   if (x?.type === "cron") return cronName(x);
   if (x instanceof Windowed) {
     return `ic1:x:s:${x.support.start};${x.support.end}|${name(x.cls).slice(4)}`;
+  }
+  if (x?.type === "fftcomp") {
+    return `ic1:f:fs=${x.fs};N=${x.N};k=${x.k};t0=${x.t0}`
+      + `;A=${ampHex(x.A)};th=${x.th};q=${x.q}`;
   }
   throw new Error("cannot name this object");
 }
@@ -63,6 +90,6 @@ export function parse(text) {
     const cls = parse("ic1:" + rest.slice(bar + 1));
     return windowed(new Span(Frac.parse(a), Frac.parse(b)), cls);
   }
-  if (tag === "f:") throw new Error("f: (FFT provenance) is reserved for v2");
+  if (tag === "f:") return parseFftBody(rest);
   throw new Error(`unrecognized name ${s}`);
 }

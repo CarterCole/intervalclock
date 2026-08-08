@@ -27,6 +27,11 @@ objs = {
     "cron_tue": ic.from_cron("0 9 * * 2", zone="America/Chicago"),
     "hour_cell": ic.cell("hour", 2026, 8, 1, 14),
     "isoweek": ic.cell("isoweek", 2026, 31),
+    # FFT provenance records (§9). Fields are exact by construction — no
+    # atan2 here, so these vectors don't depend on either side's libm.
+    "fft_interior": ic.FFTComponent(F(10), 64, 3, F(0), 1.0, F(1, 6)),
+    "fft_dc": ic.FFTComponent(F(10), 64, 0, F(-7, 3), -0.5, 0),
+    "fft_nyquist": ic.FFTComponent(F(1, 3), 64, 32, F(10**9), 2.5, F(1, 2)),
 }
 
 golden = {

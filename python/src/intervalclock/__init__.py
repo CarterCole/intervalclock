@@ -2,8 +2,9 @@
 
 Canonical, globally computable names for every interval and periodic phase
 class on a shared timeline: calendar cells, any cron schedule, any rational
-period ("every 1/3 second", any Hz), and — in the protocol, implemented in
-v2 — FFT components extended forever. See protocol/PROTOCOL.md.
+period ("every 1/3 second", any Hz), and FFT components extended forever.
+Schedule inference runs the map backwards: observed timestamps → names.
+See protocol/PROTOCOL.md.
 """
 
 from .calendar import (  # noqa: F401
@@ -39,6 +40,17 @@ from .core import (  # noqa: F401
     windowed,
 )
 from .cron import CronSchedule, cron_next_after, from_cron, to_cron  # noqa: F401
+from .dsp import (  # noqa: F401
+    DEFAULT_PHASE_QUANTUM,
+    FFTComponent,
+    alias_class,
+    alias_freq,
+    bin_identity,
+    from_fft,
+    from_samples,
+    nyquist,
+    quantize_phase_turns,
+)
 from .encode import (  # noqa: F401
     ReservedTypeError,
     decode,
@@ -48,6 +60,7 @@ from .encode import (  # noqa: F401
     parse,
     to_url,
 )
+from .infer import InferResult, infer  # noqa: F401
 from .lattice import (  # noqa: F401
     children,
     decimal_grid_class,

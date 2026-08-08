@@ -11,6 +11,7 @@ Endpoints (all GET, all return JSON):
     /v1/next?name=...&n=5&from_t=...
     /v1/contains?name=...&t=...
     /v1/alias?name=...&words=4
+    /v1/infer?timestamps=1,2,3&resolution=1&top_k=3&zone=Z
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from . import (
     from_cron,
     from_frequency,
     from_url,
+    infer,
     name,
     next_after,
     now,
@@ -41,6 +43,7 @@ from . import (
     phase,
     rat,
     resolution_versions,
+    tai_from_unix,
     to_url,
 )
 from .calendar import Cell
@@ -159,5 +162,31 @@ def v1_contains(name_: str = Query(alias="name"), t: str = "0"):
 def v1_alias(name_: str = Query(alias="name"), words: int = 4):
     try:
         return {"alias": alias(_load(name_), words=words)}
+    except (ValueError, KeyError) as e:
+        raise _err(e)
+
+
+@app.get("/v1/infer")
+def v1_infer(timestamps: str, resolution: str = "1", top_k: int = 3,
+             zone: str = "UTC", unix: bool = False):
+    """Name the schedule behind observed timestamps (comma-separated)."""
+    try:
+        stamps = [rat(s) for s in timestamps.split(",") if s.strip()]
+        if len(stamps) > 10_000:
+            raise ValueError("at most 10 000 timestamps per request")
+        if unix:
+            stamps = [tai_from_unix(u) for u in stamps]
+        results = infer(stamps, min_resolution=rat(resolution),
+                        top_k=min(top_k, 10), zone=zone)
+        return {"results": [{
+            "name": name(r.cls) if r.cron_text is None else r.cron_text,
+            "human": r.human(),
+            "kind": r.kind,
+            "period": str(r.period) if r.period is not None else None,
+            "score": r.score,
+            "p_value": r.p_value,
+            "matched_fraction": str(r.matched_fraction),
+            "phase_jitter_seconds": r.phase_jitter,
+        } for r in results]}
     except (ValueError, KeyError) as e:
         raise _err(e)
