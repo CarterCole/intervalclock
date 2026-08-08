@@ -53,13 +53,18 @@ def test_redundant_inputs_same_bytes(w, m, k, d):
     assert encode(phase(w, m, k=k, delta=d)) == encode(phase(w, m, delta=d + k * w))
 
 
-@settings(max_examples=60)
+# The boolean-algebra properties below run without a deadline. Two phase
+# classes with co-prime periods intersect over their rational lcm, so the
+# result honestly carries hundreds of arcs and takes a few hundred
+# milliseconds to build. That is exactness costing what exactness costs;
+# timing it would only make these tests flaky on a loaded machine.
+@settings(max_examples=60, deadline=None)
 @given(phases, phases)
 def test_subset_agrees_with_algebra(a, b):
     assert subset(a, b) == (intersect(a, complement(b)) is NEVER)
 
 
-@settings(max_examples=40)
+@settings(max_examples=40, deadline=None)
 @given(phases, phases, st.data())
 def test_boolean_ops_agree_with_membership(a, b, data):
     from intervalclock.rat import rlcm
@@ -76,7 +81,7 @@ def test_boolean_ops_agree_with_membership(a, b, data):
     assert contains(c, t) == (not contains(a, t))
 
 
-@settings(max_examples=60)
+@settings(max_examples=60, deadline=None)
 @given(phases, phases)
 def test_mutual_subset_means_identical_bytes(a, b):
     if subset(a, b) and subset(b, a):
