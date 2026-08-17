@@ -203,8 +203,11 @@ body    := &quot;never&quot; | &quot;always&quot;
          | &quot;g:&quot; cell [&quot;!&quot; zone]                      (* calendar cell, default UTC *)
          | &quot;k:&quot; cronrec (&quot;+&quot; cronrec)* [&quot;!&quot; zone]    (* cron; &quot;+&quot; joins records *)
          | &quot;x:&quot; &quot;s:&quot; rat &quot;;&quot; rat &quot;|&quot; clsbody         (* windowed: span | class *)
-         | &quot;f:&quot; …                                    (* reserved: FFT provenance, v2 *)
+         | &quot;f:&quot; fft                                  (* FFT provenance record, §9 *)
 clsbody := (&quot;c:&quot; | &quot;u:&quot;) …                           (* as above, without &quot;ic1:&quot; *)
+fft     := &quot;fs=&quot; rat &quot;;N=&quot; posint &quot;;k=&quot; uint &quot;;t0=&quot; rat
+           &quot;;A=&quot; hex16 &quot;;th=&quot; rat &quot;;q=&quot; rat          (* field order is canonical *)
+hex16   := 16 lowercase hex digits                   (* IEEE-754 binary64, big-endian *)
 rat     := [&quot;-&quot;] int [&quot;/&quot; posint]                    (* lowest terms, den &gt; 0 *)
 cell    := yyyy | yyyy&quot;-&quot;mm | yyyy&quot;-&quot;mm&quot;-&quot;dd
          | yyyy&quot;-&quot;mm&quot;-&quot;dd&quot;T&quot;hh [&quot;:&quot;mm [&quot;:&quot;ss]] | yyyy&quot;-W&quot;ww
@@ -216,6 +219,14 @@ term    := int | int&quot;-&quot;int | int&quot;-&quot;int&quot;/&quot;posint
 denominators; <code>phi ∈ [0, P)</code>; no whitespace; cron month/dow names and
 7-as-Sunday normalized to numbers at parse; cron field text is the
 deterministic greedy projection of the bitmask (§6).</p>
+<p>For <code>f:</code> records specifically: fields appear in exactly the order above
+(one record, one spelling — parsers MUST reject reordered fields, unlike
+<code>c:</code> where a key-value reading is harmless); <code>th</code> is a phase in <strong>turns</strong>
+in <code>[0, 1)</code>, never radians; <code>k ∈ [0, ⌊N/2⌋]</code>; <code>k = 0</code> forces <code>th = 0</code> and
+<code>k = N/2</code> forces <code>th ∈ {0, 1/2}</code> (§9); <code>A</code> is the raw binary64 amplitude as
+16 lowercase hex digits, and must be finite. Amplitude is spelled in hex
+because shortest-decimal float formatting differs between languages, which
+would break byte-identity; it is data, not identity (§2.4).</p>
 <p>Worked examples (all verified by the reference implementation):</p>
 <table>
 <thead>
@@ -245,6 +256,10 @@ deterministic greedy projection of the bitmask (§6).</p>
 <td>FFT bin at 7.5 Hz, phase π/3, t₀ = epoch</td>
 <td><code>ic1:c:w=1/15;m=2;phi=7/90</code></td>
 </tr>
+<tr>
+<td>That bin as a provenance record (10 Hz, N=64, k=3, A=1.0, θ=1/6 turn)</td>
+<td><code>ic1:f:fs=10;N=64;k=3;t0=0;A=3ff0000000000000;th=1/6;q=1/16777216</code></td>
+</tr>
 </tbody>
 </table>
 <h2>4. Binary encoding</h2>
@@ -253,7 +268,7 @@ floor. The layout is <strong>fixed with a variable-length exact tail</strong>:</
 <pre><code>[1 byte header: version&lt;&lt;4 | type] [8 bytes big-endian sort key] [LEB128 tail]
 
 types: 0x0 NEVER   0x1 ALWAYS  0x2 INSTANT  0x3 SPAN   0x4 PHASE
-       0x5 PSET    0x6 CELL    0x7 CRON     0x8 FFTCOMP (reserved, v2)
+       0x5 PSET    0x6 CELL    0x7 CRON     0x8 FFTCOMP
        0x9 WINDOWED             0xA–0xF reserved
 </code></pre>
 <p>All varints are unsigned LEB128; signed values use zigzag. Rationals are
@@ -278,8 +293,17 @@ types: 0x0 NEVER   0x1 ALWAYS  0x2 INSTANT  0x3 SPAN   0x4 PHASE
   sorted by their bytes.</li>
 <li><strong>WINDOWED</strong>: span layout (key + start-frac + duration) followed by the
   embedded class encoding verbatim.</li>
-<li>Decoders MUST reject 0x8 and unknown types with a "reserved" error, and
-  reject unknown versions.</li>
+<li><strong>FFTCOMP</strong>: key = <code>uint64be(floor(t₀) + 2^63)</code> — a record is a
+  measurement event, so captures sort chronologically and one capture's
+  bins stay adjacent (a period key would need an infinity case for DC);
+  tail = <code>t₀-frac num, den</code>, <code>fs.num, fs.den</code>, <code>N</code>, <code>k</code>, then <strong>8 raw bytes
+  of IEEE-754 float64 big-endian amplitude</strong>, then <code>th.num, th.den</code>,
+  <code>q.num, q.den</code>. Every varint here is non-negative by construction (t₀'s
+  sign lives in the offset-binary key), so no zigzag appears.</li>
+<li>Decoders MUST reject unknown types (0xA–0xF) with a "reserved" error, and
+  reject unknown versions. Filling the 0x8 slot is deliberately forward-
+  incompatible and backward-compatible: a v1-era decoder rejects an FFTCOMP
+  ID with exactly the error it was told to raise, rather than misreading it.</li>
 </ul>
 <p><strong>URL form</strong>: <code>IC1-</code> + Crockford base32 of the binary ID (left-aligned to a
 5-bit boundary; decoding accepts lowercase and the o/i/l confusables).</p>
@@ -348,8 +372,9 @@ NTP-disciplined; the default uncertainty bound is a conservative 100 ms.
 Near a slot boundary the current state is <em>genuinely ambiguous</em> within the
 sync error: <code>state_at(w, m, t, err)</code> returns one state, or two when t is
 within err of a boundary. The ambiguity is surfaced, never hidden.</p>
-<h2>9. FFT layer (normative here; implemented in v2)</h2>
-<p>The mapping is frozen now so implementations slot in without breaking IDs.</p>
+<h2>9. FFT layer</h2>
+<p>The mapping is frozen: two implementations given the same provenance MUST
+produce the same name.</p>
 <ul>
 <li>Bin k of an N-sample capture at rate f_s (rational) starting at t₀ has
   exact frequency <code>f_k = k·f_s/N</code> and period <code>P = N/(k·f_s)</code>. Its eternal
@@ -363,20 +388,44 @@ within err of a boundary. The ambiguity is surfaced, never hidden.</p>
   (A slot width of 1/f_s fails whenever k ∤ N; the half-cycle form never
   does.) The §3 example: 7.5 Hz, θ = π/3, t₀ = 0 → <code>ic1:c:w=1/15;m=2;phi=7/90</code>,
   and <code>cos(2π·7.5·t + π/3) = 1</code> exactly at pulse centers (t = 1/9 + n·2/15).
-- Windowed identity: the capture's component is <code>Windowed(capture span, Φ)</code>;
-  amplitude rides alongside as data. The reserved <code>f:</code> text form and 0x8
-  binary type carry provenance <code>(f_s, N, k, t₀, A, θ)</code>.
+- Windowed identity: the capture's component is <code>Windowed(capture span, Φ)</code>
+  over the span <code>[t₀, t₀ + N/f_s)</code>; amplitude rides alongside as data. The
+  <code>f:</code> text form and 0x8 binary type carry provenance
+  <code>(f_s, N, k, t₀, A, θ, q)</code>.
+- <strong>A record is not a name for a set of time.</strong> §2.4 forbids amplitude from
+  entering a name, and it does not: an <code>f:</code> record is a statement <em>about a
+  measurement</em>, and its canonical projections are the eternal Φ and the
+  <code>Windowed</code>, both independent of A and q. Two records differing only in
+  amplitude are different records that name the same time.
 - Phases estimated as floats are snapped to a declared quantum
-  (<code>phase_quantum_turns</code>, default 1/2²⁴ turn) — deterministic and part of
-  the provenance. Exact-bin tones only; a non-bin tone leaks across bins,
-  and each bin's name describes <em>the analysis frame's component</em>, not the
-  underlying tone.
-- Edge cases: k = 0 (DC) → <code>ALWAYS</code> + amplitude; k = N/2 → θ ∈ {0, π}.
+  (<code>phase_quantum_turns</code>, default <code>q</code> = 1/2²⁴ turn) — deterministic and
+  part of the provenance. Exact-bin tones only; a non-bin tone leaks across
+  bins, and each bin's name describes <em>the analysis frame's component</em>, not
+  the underlying tone.
+- θ's canonical unit is <strong>turns</strong>, an exact rational in <code>[0, 1)</code>; radians
+  are irrational multiples of a turn and would drag the φ computation out
+  of ℚ. Snapping is normative and happens <em>before</em> φ is computed:
+  <code>n = round_half_even(exact(θ)/q)</code>, <code>θ = (n·q) mod 1</code>, all in ℚ from the
+  float's exact dyadic value. (Half-even, not half-up: language defaults
+  differ — JS <code>Math.round</code> is half-up — and a tie must not fork the name.)
+  A record's θ need not lie on its own <code>q</code> grid: an exactly-known phase
+  such as 1/6 turn stays exact.
+- Amplitude, given the convention <code>X[k] = (N/2)·A·e^{iθ}</code>, is
+  <code>A = 2·sqrt(re² + im²)/N</code> — the <strong>naive</strong> expression, not <code>hypot</code> and not
+  fused multiply-add, because a sequence of correctly-rounded IEEE
+  operations is reproducible while those are not.
+- Edge cases: k = 0 (DC) → <code>ALWAYS</code> + amplitude (the signed mean <code>re/N</code>,
+  θ = 0; windowed, it is just the capture span); k = N/2 → θ ∈ {0, π},
+  i.e. <code>th ∈ {0, 1/2}</code>, with <code>A = |re|/N</code> and the sign carried by the phase.
+- Honesty: <code>atan2</code> is only correctly rounded to within an ulp or so across
+  libms, so a record certifies <em>the analyzer's</em> estimate of θ, not a
+  platform-independent truth. The quantum absorbs the difference; given the
+  record, the name that follows is exact.
 - <strong>Nyquist/aliasing</strong> (exact in ℚ): the ceiling is per-signal f_s/2. For
   f above it, <code>r = f − f_s·round(f/f_s)</code> (half-even), alias frequency
   <code>|r|</code>, conjugate phase when r &lt; 0. Example: 15/2 Hz sampled at 10 Hz →
   5/2 Hz, conjugated.</p>
-<h2>10. Schedule inference (normative sketch; implemented in v2)</h2>
+<h2>10. Schedule inference (normative sketch)</h2>
 <p>The inverse operation: names → time sets is the forward direction; this is
 observed time sets → names.</p>
 <p><code>infer(timestamps, min_resolution, top_k, candidates=auto)</code> → ranked
@@ -405,7 +454,7 @@ observed time sets → names.</p>
    two-layer split is forced, not chosen. (An optional idealized
    "proleptic-UTC" lens, under which any UTC cron is periodic with the
    400-year Gregorian period of 12 622 780 800 s, may compile cron → PSet
-   in v2 for users who accept the idealization.)</li>
+   for users who accept the idealization; not implemented.)</li>
 <li><strong>Fixed width vs exact ℚ</strong>: pick two of {fixed width, exact rationals,
    no floor}. The encoding keeps exactness and the fixed 9-byte sortable
    prefix; the tail varies.</li>
@@ -418,6 +467,12 @@ observed time sets → names.</p>
 <ul>
 <li>Protocol version: the <code>ic1:</code>/<code>IC1-</code> prefix and the header nibble. Breaking
   changes bump to <code>ic2:</code>.</li>
+<li>Claiming a <em>reserved</em> slot is not a breaking change and does not bump the
+  prefix: §9's mapping was frozen before anything could depend on it, and a
+  decoder that predates the claim rejects the new type with the "reserved"
+  error it was already required to raise. Note the consequence for §7: word
+  aliases hash the binary ID, so a slot's layout must be frozen — as 0x8 now
+  is — before any registry mints aliases for it.</li>
 <li>Wordlist: <code>bip39-english-v1</code>, frozen.</li>
 <li>Leap table and tzdata versions stamp every civil resolution
   (<code>resolution_versions()</code>).</li>

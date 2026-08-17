@@ -13,7 +13,7 @@ dependencies = []
 
 [project.optional-dependencies]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
-dsp = ["numpy>=1.26"]  # reserved for v2 (from_fft, alias_class)
+dsp = ["numpy>=1.26"]  # only for from_samples(); from_fft() is stdlib-only
 dev = ["pytest>=8", "hypothesis>=6"]
 
 [project.scripts]

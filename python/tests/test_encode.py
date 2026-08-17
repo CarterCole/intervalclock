@@ -5,6 +5,7 @@ import pytest
 from intervalclock import (
     ALWAYS,
     NEVER,
+    FFTComponent,
     Instant,
     RangeError,
     ReservedTypeError,
@@ -30,6 +31,8 @@ GOLDEN = [
     (from_cron("*/5 * * * *"), "ic1:k:0-55/5|*|*|*|*"),
     (NEVER, "ic1:never"),
     (ALWAYS, "ic1:always"),
+    (FFTComponent(F(10), 64, 3, F(0), 1.0, F(1, 6)),
+     "ic1:f:fs=10;N=64;k=3;t0=0;A=3ff0000000000000;th=1/6;q=1/16777216"),
 ]
 
 
@@ -55,6 +58,9 @@ def _objects():
         from_cron("*/5 * * * *"),
         from_cron("0 9 * * 2", zone="America/Chicago"),
         windowed(span(0, 10), phase(F(1, 3), 3, k=1)),
+        FFTComponent(F(10), 64, 3, F(0), 1.0, F(1, 6)),
+        FFTComponent(F(10), 64, 0, F(-7, 3), -0.5, 0),  # DC, negative t0
+        FFTComponent(F(1, 3), 65, 32, F(1e9), 2.5, F(1, 2)),  # odd N, top bin
     ]
 
 
@@ -89,11 +95,21 @@ def test_phase_ids_cluster_by_period():
     assert small < big  # f64(P) big-endian sorts by period
 
 
-def test_reserved_tag_0x8():
+def test_reserved_tags():
     with pytest.raises(ReservedTypeError):
+        decode(bytes([0x1A]))  # 0xA-0xF are still unclaimed
+    with pytest.raises(ReservedTypeError):
+        decode(bytes([0x1F]))
+
+
+def test_fft_tag_0x8_is_claimed():
+    # 0x8 decodes now (v2 filled the reserved slot), so a bare tag is
+    # truncated data, not a reserved type.
+    with pytest.raises(ValueError) as e:
         decode(bytes([0x18]))
-    with pytest.raises(ReservedTypeError):
-        parse("ic1:f:fs=10;N=64;k=3")
+    assert not isinstance(e.value, ReservedTypeError)
+    with pytest.raises(ValueError):
+        parse("ic1:f:fs=10;N=64;k=3")  # missing t0/A/th/q
 
 
 def test_version_nibble_enforced():

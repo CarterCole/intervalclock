@@ -1,13 +1,13 @@
-# future/ — v2 modules, specified but not yet implemented
+# future/ — specified but not yet implemented
 
-These are reserved by the protocol (PROTOCOL.md §9–§10) and by the encoding
-(type 0x8, text form `f:`):
+The FFT layer (PROTOCOL.md §9) and schedule inference (§10) now ship in
+`python/src/intervalclock/dsp.py` and `infer.py`; type 0x8 and the text
+form `f:` are claimed.
 
-- **dsp.py** — `from_fft(X, fs, t0, phase_quantum_turns)` naming every bin as
-  an eternal phase class (positive-half-cycle mapping), `nyquist(fs)`,
-  `alias_freq`/`alias_class` (exact rational folding), windowed-class
-  provenance.
-- **infer.py** — `infer(timestamps, min_resolution, top_k)`: epoch folding
-  over rational + calendar candidate periods, Rayleigh-test scoring,
-  `to_cron()` on winners. The inverse operation: observed timestamps → named
-  schedules ("this feed publishes every Tuesday ~09:00").
+What remains reserved:
+
+- **Proleptic-UTC cron → PSet** (§11.2): under an idealized lens that
+  ignores future leap seconds, any UTC cron is periodic with the 400-year
+  Gregorian period of 12 622 780 800 s. Optional by design — it trades an
+  honest "cron is symbolic" for a period a user may prefer to reason with.
+- **Binary types 0xA–0xF** and the rest of the header nibble space.

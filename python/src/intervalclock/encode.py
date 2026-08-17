@@ -6,13 +6,15 @@ impossible with unbounded rational denominators and no resolution floor):
     [1B header: version<<4 | type] [8B big-endian sort key] [LEB128 tail]
 
 Types: 0x0 NEVER · 0x1 ALWAYS · 0x2 INSTANT · 0x3 SPAN · 0x4 PHASE ·
-0x5 PSET · 0x6 CELL · 0x7 CRON · 0x8 FFTCOMP (reserved for v2) ·
-0x9 WINDOWED · 0xA–0xF reserved.
+0x5 PSET · 0x6 CELL · 0x7 CRON · 0x8 FFTCOMP · 0x9 WINDOWED ·
+0xA–0xF reserved.
 
 Sort keys: instants/spans/cells order chronologically under plain byte
 comparison; PHASE/PSET use float64(P) big-endian so classes cluster by
 period (exact ties broken by the canonical tail bytes — deterministic,
-approximately numeric).
+approximately numeric). FFTCOMP keys on the capture start, so captures
+sort chronologically and one capture's bins stay adjacent (a period key
+would need an infinity case for DC).
 
 The text grammar ("ic1:...") is the authoritative human-readable canonical
 name; the pretty Φ[...] repr is display sugar. URL form: "IC1-" + Crockford
@@ -40,6 +42,7 @@ from .core import (
     windowed,
 )
 from .cron import CronRecord, CronSchedule, _parse_field, record_text
+from .dsp import FFTComponent, amp_from_hex, amp_hex
 from .rat import fmt, rat
 from .timescale import Instant
 
@@ -129,7 +132,11 @@ def _hdr(t: int) -> bytes:
 
 
 def encode(x) -> bytes:
-    """Canonical binary ID. Equal sets ⇒ identical bytes."""
+    """Canonical binary ID. Equal sets ⇒ identical bytes.
+
+    Also encodes an FFTComponent, which is a provenance record rather than
+    a set of time (§9); its equality includes the amplitude it measured.
+    """
     if isinstance(x, Never):
         return _hdr(TYPE_NEVER)
     if isinstance(x, Always):
@@ -179,6 +186,15 @@ def encode(x) -> bytes:
         for r in x.records:
             out += r.to_bytes()
         return out
+    if isinstance(x, FFTComponent):
+        fl, fr = _frac_parts(x.t0)
+        return (_hdr(TYPE_FFTCOMP) + _sortkey_time(x.t0)
+                + _leb(fr.numerator) + _leb(fr.denominator)
+                + _leb(x.fs.numerator) + _leb(x.fs.denominator)
+                + _leb(x.N) + _leb(x.k)
+                + struct.pack(">d", x.A)
+                + _leb(x.theta_turns.numerator) + _leb(x.theta_turns.denominator)
+                + _leb(x.quantum.numerator) + _leb(x.quantum.denominator))
     if isinstance(x, Windowed):
         sp = x.support
         fl, fr = _frac_parts(sp.start)
@@ -200,10 +216,6 @@ def decode(b: bytes):
         return NEVER
     if typ == TYPE_ALWAYS:
         return ALWAYS
-    if typ == TYPE_FFTCOMP:
-        raise ReservedTypeError(
-            "type 0x8 (FFT component) is reserved for protocol v2"
-        )
     r = _Reader(b, 1)
     if typ == TYPE_INSTANT:
         fl = int.from_bytes(r.take(8), "big") - 2**63
@@ -245,6 +257,15 @@ def decode(b: bytes):
         if not recs:
             return NEVER
         return CronSchedule(recs, zone)
+    if typ == TYPE_FFTCOMP:
+        fl = int.from_bytes(r.take(8), "big") - 2**63
+        t0 = fl + Fraction(r.leb(), r.leb())
+        fs = Fraction(r.leb(), r.leb())
+        N, k = r.leb(), r.leb()
+        A = struct.unpack(">d", r.take(8))[0]
+        th = Fraction(r.leb(), r.leb())
+        q = Fraction(r.leb(), r.leb())
+        return FFTComponent(fs, N, k, t0, A, th, q)
     if typ == TYPE_WINDOWED:
         fl = int.from_bytes(r.take(8), "big") - 2**63
         start = fl + Fraction(r.leb(), r.leb())
@@ -281,6 +302,10 @@ def name(x) -> str:
     if isinstance(x, Windowed):
         inner = name(x.cls)[len("ic1:"):]
         return f"ic1:x:s:{fmt(x.support.start)};{fmt(x.support.end)}|{inner}"
+    if isinstance(x, FFTComponent):
+        return (f"ic1:f:fs={fmt(x.fs)};N={x.N};k={x.k};t0={fmt(x.t0)}"
+                f";A={amp_hex(x.A)};th={fmt(x.theta_turns)}"
+                f";q={fmt(x.quantum)}")
     raise TypeError(f"cannot name {x!r}")
 
 
@@ -329,8 +354,31 @@ def _parse_cron_body(body: str) -> CronSchedule:
     return CronSchedule(tuple(sorted(recs, key=lambda r: r.to_bytes())), zone)
 
 
+_FFT_FIELDS = ("fs", "N", "k", "t0", "A", "th", "q")
+
+
+def _parse_fft_body(body: str) -> FFTComponent:
+    """Parse an f: provenance record. Field order is canonical, not optional.
+
+    (Unlike c:, which tolerates reordering, an f: record has one spelling —
+    otherwise two "canonical" strings would name the same record.)
+    """
+    parts = body.split(";")
+    if len(parts) != len(_FFT_FIELDS):
+        raise ValueError(
+            f"f: needs fields {';'.join(k + '=' for k in _FFT_FIELDS)}"
+        )
+    v = {}
+    for part, key in zip(parts, _FFT_FIELDS):
+        if not part.startswith(key + "="):
+            raise ValueError(f"f: expected {key}= here, got {part!r}")
+        v[key] = part[len(key) + 1:]
+    return FFTComponent(rat(v["fs"]), int(v["N"]), int(v["k"]), rat(v["t0"]),
+                        amp_from_hex(v["A"]), rat(v["th"]), rat(v["q"]))
+
+
 def parse(s: str):
-    """Parse a canonical text name back to its TimeSet."""
+    """Parse a canonical text name back to its TimeSet (or f: record)."""
     s = s.strip()
     if not s.startswith("ic1:"):
         raise ValueError("names start with 'ic1:'")
@@ -367,7 +415,7 @@ def parse(s: str):
         cls = parse("ic1:" + cls_part)
         return windowed(Span(rat(a), rat(b)), cls)
     if body.startswith("f:"):
-        raise ReservedTypeError("f: (FFT provenance) is reserved for v2")
+        return _parse_fft_body(body[2:])
     raise ValueError(f"unrecognized name {s!r}")
 
 

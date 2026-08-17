@@ -246,6 +246,63 @@
    "shadow"
   ]
  },
+ "fft_interior": {
+  "name": "ic1:f:fs=10;N=64;k=3;t0=0;A=3ff0000000000000;th=1/6;q=1/16777216",
+  "hex": "18800000000000000000010a0140033ff000000000000001060180808008",
+  "url": "IC1-320000000000000004502G037ZR000000000008606081008",
+  "alias": "radio-interest-verify-bike",
+  "full_alias": [
+   "radio",
+   "interest",
+   "verify",
+   "bike",
+   "logic",
+   "pride",
+   "island",
+   "avocado",
+   "scrub",
+   "spare",
+   "enhance"
+  ]
+ },
+ "fft_dc": {
+  "name": "ic1:f:fs=10;N=64;k=0;t0=-7/3;A=bfe0000000000000;th=0;q=1/16777216",
+  "hex": "187ffffffffffffffd02030a014000bfe000000000000000010180808008",
+  "url": "IC1-31ZZZZZZZZZZZZ820C502G00QZG000000000000106081008",
+  "alias": "chase-advice-diesel-dish",
+  "full_alias": [
+   "chase",
+   "advice",
+   "diesel",
+   "dish",
+   "hover",
+   "toss",
+   "scrap",
+   "like",
+   "scale",
+   "summer",
+   "they"
+  ]
+ },
+ "fft_nyquist": {
+  "name": "ic1:f:fs=1/3;N=64;k=32;t0=1000000000;A=4004000000000000;th=1/2;q=1/16777216",
+  "hex": "18800000003b9aca00000101034020400400000000000001020180808008",
+  "url": "IC1-320000007EDCM000040G6G10802000000000008206081008",
+  "alias": "bullet-click-sign-together",
+  "full_alias": [
+   "bullet",
+   "click",
+   "sign",
+   "together",
+   "narrow",
+   "harsh",
+   "try",
+   "list",
+   "erode",
+   "decline",
+   "armor"
+  ]
+ },
  "_cron_next": [
   {
    "expr": "*/5 * * * *",

@@ -7,6 +7,7 @@ import {
 } from "./core.js";
 import { KINDS, cell } from "./cells.js";
 import { recordBytes, recordFromBytes } from "./cron.js";
+import { fftComponent } from "./fft.js";
 
 export const VERSION = 1;
 const TYPES = { never: 0x0, always: 0x1, instant: 0x2, span: 0x3, phase: 0x4,
@@ -88,6 +89,12 @@ export function encode(x) {
     for (const r of x.records) out.push(...recordBytes(r));
     return Uint8Array.from(out);
   }
+  if (x?.type === "fftcomp") {
+    const [, fr] = fracParts(x.t0);
+    return Uint8Array.from([...hdr(TYPES.fftcomp), ...sortkeyTime(x.t0),
+      ...lebFrac(fr), ...lebFrac(x.fs), ...leb(BigInt(x.N)), ...leb(BigInt(x.k)),
+      ...f64be(x.A), ...lebFrac(x.th), ...lebFrac(x.q)]);
+  }
   if (x instanceof Windowed) {
     const [, fr] = fracParts(x.support.start);
     return Uint8Array.from([...hdr(TYPES.windowed), ...sortkeyTime(x.support.start),
@@ -118,7 +125,6 @@ export function decode(b) {
   if (ver !== VERSION) throw new Error(`unsupported version ${ver}`);
   if (typ === TYPES.never) return NEVER;
   if (typ === TYPES.always) return ALWAYS;
-  if (typ === TYPES.fftcomp) throw new Error("type 0x8 (FFT) is reserved for v2");
   const r = new Reader(b, 1);
   if (typ === TYPES.instant) {
     const fl = r.u64() - (1n << 63n);
@@ -160,6 +166,14 @@ export function decode(b) {
     const records = [];
     for (let i = 0; i < n; i++) records.push(recordFromBytes(r.take(18)));
     return n ? { type: "cron", records, zone } : NEVER;
+  }
+  if (typ === TYPES.fftcomp) {
+    const fl = r.u64() - (1n << 63n);
+    const t0 = new Frac(fl).add(r.frac());
+    const fs = r.frac();
+    const N = Number(r.leb()), k = Number(r.leb());
+    const A = new DataView(Uint8Array.from(r.take(8)).buffer).getFloat64(0, false);
+    return fftComponent({ fs, N, k, t0, A, th: r.frac(), q: r.frac() });
   }
   if (typ === TYPES.windowed) {
     const fl = r.u64() - (1n << 63n);

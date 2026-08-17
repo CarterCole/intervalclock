@@ -102,17 +102,28 @@ happened to call it.
 protocol/PROTOCOL.md     the spec (normative)
 python/                  reference library + CLI + REST API + tests
 web/                     static site: docs, live clock, playground (TS core)
-future/                  v2 stubs: FFT toolkit, schedule inference
+future/                  what is still only specified, not built
 ```
 
 ## Status
 
-v1 implements the core phase-class algebra, encodings, word aliases,
-calendar lens, and cron canonicalization (89 tests, including leap seconds,
-DST pathologies, and hypothesis property tests). The FFT/Nyquist layer and
-schedule inference (pull a blog's publishing schedule out of RSS timestamps)
-are fully specified in the protocol and reserved in the encoding, arriving
-in v2.
+The core phase-class algebra, encodings, word aliases, calendar lens, and
+cron canonicalization all ship, as do the two v2 layers: the FFT/Nyquist
+mapping (`dsp.py`, binary type 0x8 and the `f:` text form) and schedule
+inference (`infer.py` — point it at a blog's publication timestamps and it
+answers "every Tuesday ~09:00"). 167 tests, including leap seconds, DST
+pathologies, byte-parity cross-tests against the browser core, and
+hypothesis property tests.
+
+```python
+from intervalclock import infer, tai_from_unix, to_cron
+results = infer([tai_from_unix(u) for u in unix_timestamps], min_resolution=60)
+print(results[0].human(), "→", to_cron(results[0].cls))
+```
+
+Still unbuilt: the optional proleptic-UTC lens that would compile cron to a
+400-year PSet (PROTOCOL.md §11.2). Inference runs in Python only; the
+browser core carries the FFT encodings but not the analysis.
 
 *Planck time (~5.39×10⁻⁴⁴ s) is a documented physical footnote here, not a
 tick: it is a measured constant with error bars, while ℚ over the defined SI

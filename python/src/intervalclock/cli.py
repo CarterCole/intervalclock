@@ -9,6 +9,7 @@
     intervalclock next NAME [-n N] [--from T]    upcoming occurrences
     intervalclock contains NAME T                membership test
     intervalclock alias NAME [--words N]         word alias
+    intervalclock infer FILE|- [--unix]          timestamps → named schedules
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from . import (
     from_cron,
     from_frequency,
     from_url,
+    infer,
     name,
     next_after,
     now,
@@ -37,6 +39,8 @@ from . import (
     phase,
     rat,
     state_at,
+    tai_from_unix,
+    to_cron,
     to_url,
 )
 from .calendar import Cell
@@ -133,6 +137,25 @@ def cmd_alias(args) -> int:
     return 0
 
 
+def cmd_infer(args) -> int:
+    text = sys.stdin.read() if args.file == "-" else open(args.file).read()
+    stamps = [rat(line) for line in text.split() if line]
+    if args.unix:
+        stamps = [tai_from_unix(u) for u in stamps]
+    results = infer(stamps, min_resolution=rat(args.resolution), top_k=args.top,
+                    candidates="scan" if args.scan else "auto", zone=args.zone)
+    if not results:
+        print("no schedule beats chance in this data")
+        return 1
+    for r in results:
+        ident = r.cron_text if r.cron_text else name(r.cls)
+        print(f"{r.human()}\n  name:    {ident}\n"
+              f"  fit:     R̄={r.score:.4f}  p={r.p_value:.2e}  "
+              f"matched={float(r.matched_fraction):.0%}  "
+              f"jitter=±{r.phase_jitter:.1f}s")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="intervalclock", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -173,6 +196,18 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("name")
     sp.add_argument("--words", type=int, default=4)
     sp.set_defaults(fn=cmd_alias)
+
+    sp = sub.add_parser("infer", help="name the schedule behind timestamps")
+    sp.add_argument("file", help="whitespace-separated timestamps, or '-' for stdin")
+    sp.add_argument("--resolution", default="1",
+                    help="finest phase you are willing to claim, in seconds")
+    sp.add_argument("--top", type=int, default=3)
+    sp.add_argument("--zone", default="UTC", help="civil lens for calendar folding")
+    sp.add_argument("--unix", action="store_true",
+                    help="input is unix time, not TAI seconds since epoch")
+    sp.add_argument("--scan", action="store_true",
+                    help="sweep all periods, not just human ones (slow)")
+    sp.set_defaults(fn=cmd_infer)
 
     args = p.parse_args(argv)
     try:
