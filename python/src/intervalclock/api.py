@@ -47,6 +47,7 @@ from . import (
     to_url,
 )
 from .calendar import Cell
+from .duration import CalDuration, CalSpan, Duration, cal_span, duration, from_iso
 from .encode import _parse_cell
 
 app = FastAPI(
@@ -71,6 +72,19 @@ def _payload(x) -> dict:
         sp = cell_span(x)
         out["span"] = {"name": name(sp), "start": str(sp.start), "end": str(sp.end)}
         out["resolution_versions"] = resolution_versions()
+    if isinstance(x, CalSpan):
+        sp = x.span()
+        out["span"] = {"name": name(sp), "start": str(sp.start), "end": str(sp.end)}
+        out["seconds_here"] = str(sp.duration)
+        out["resolution_versions"] = resolution_versions()
+    if isinstance(x, Duration):
+        out["seconds"] = str(x.seconds)
+        out["hz"] = str(x.hz) if x != 0 else None
+    if isinstance(x, (Duration, CalDuration)):
+        try:
+            out["iso"] = x.iso
+        except ValueError:
+            out["iso"] = None
     return out
 
 
@@ -98,6 +112,8 @@ def v1_name(
     delta: str = "0",
     hz: str | None = None,
     cell: str | None = None,
+    step: str | None = None,
+    anchor: str | None = None,
     zone: str = "UTC",
 ):
     try:
@@ -109,8 +125,13 @@ def v1_name(
             x = from_frequency(rat(hz))
         elif cell:
             x = _parse_cell(cell if zone == "UTC" else f"{cell}!{zone}")
+        elif step:
+            t = step.strip()
+            d = (from_iso(t) if t.upper().lstrip("+-").startswith("P")
+                 else duration(rat(t)))
+            x = cal_span(rat(anchor), d, zone) if anchor else d
         else:
-            raise ValueError("pass one of cron, period, hz, cell")
+            raise ValueError("pass one of cron, period, hz, step, cell")
         return _payload(x)
     except (ValueError, KeyError) as e:
         raise _err(e)

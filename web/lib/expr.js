@@ -8,6 +8,7 @@ import { parse } from "./names.js";
 import { fromUrl } from "./encode.js";
 import { fromCron } from "./cron.js";
 import { cellSpan } from "./cells.js";
+import { calSpan, calspanSpan, fromIso } from "./duration.js";
 
 export function atom(raw) {
   const s = raw.trim();
@@ -25,17 +26,29 @@ export function atom(raw) {
       { k: grid[3] ? parseInt(grid[3], 10) : 0,
         delta: grid[4] ? Frac.parse(grid[4]) : ZERO });
   }
+  // A step, optionally anchored: "P1M", "PT1H30M", "P1M @ 1662854437".
+  if (/^-?P/i.test(s)) {
+    const iso = /^(-?P[^@]*?)(?:\s*@\s*(-?[\d./]+))?$/i.exec(s);
+    if (iso) {
+      const step = fromIso(iso[1].trim());
+      return iso[2] ? calSpan(Frac.parse(iso[2]), step) : step;
+    }
+  }
   if (/^\d{4}(-|$)/.test(s)) return parse("ic1:g:" + s);
   if (s.split(/\s+/).length === 5) return fromCron(s);
   throw new Error(
-    "could not interpret input — try an ic1: name, a cron, '1/3 x3 @2', '7.5hz', a cell, or mix with & and |");
+    "could not interpret input — try an ic1: name, a cron, '1/3 x3 @2', '7.5hz', a cell, a step like 'P1M @ 1662854437', or mix with & and |");
 }
 
 // A cell is symbolic; to mix it, resolve to its physical span (UTC lens).
 export function physical(x) {
   if (x?.type === "cell") return cellSpan(x);
+  if (x?.type === "calspan") return calspanSpan(x);
   if (x?.type === "cron") {
     throw new Error("cron is symbolic (civil layer) — mix physical classes");
+  }
+  if (x?.type === "duration" || x?.type === "caldur") {
+    throw new Error("a duration is a step, not a set of time — anchor it (P1M @ t) to mix it");
   }
   return x;
 }

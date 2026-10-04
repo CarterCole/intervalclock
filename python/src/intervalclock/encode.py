@@ -7,7 +7,7 @@ impossible with unbounded rational denominators and no resolution floor):
 
 Types: 0x0 NEVER · 0x1 ALWAYS · 0x2 INSTANT · 0x3 SPAN · 0x4 PHASE ·
 0x5 PSET · 0x6 CELL · 0x7 CRON · 0x8 FFTCOMP · 0x9 WINDOWED ·
-0xA–0xF reserved.
+0xA DURATION · 0xB CALDUR · 0xC CALSPAN · 0xD–0xF reserved.
 
 Sort keys: instants/spans/cells order chronologically under plain byte
 comparison; PHASE/PSET use float64(P) big-endian so classes cluster by
@@ -43,6 +43,7 @@ from .core import (
 )
 from .cron import CronRecord, CronSchedule, _parse_field, record_text
 from .dsp import FFTComponent, amp_from_hex, amp_hex
+from .duration import CalDuration, CalSpan, Duration, caldur
 from .rat import fmt, rat
 from .timescale import Instant
 
@@ -56,6 +57,7 @@ VERSION = 1
 TYPE_NEVER, TYPE_ALWAYS, TYPE_INSTANT, TYPE_SPAN = 0x0, 0x1, 0x2, 0x3
 TYPE_PHASE, TYPE_PSET, TYPE_CELL, TYPE_CRON = 0x4, 0x5, 0x6, 0x7
 TYPE_FFTCOMP, TYPE_WINDOWED = 0x8, 0x9
+TYPE_DURATION, TYPE_CALDUR, TYPE_CALSPAN = 0xA, 0xB, 0xC
 
 
 class ReservedTypeError(ValueError):
@@ -131,6 +133,21 @@ def _hdr(t: int) -> bytes:
 # --- encode -----------------------------------------------------------------
 
 
+def _caldur_tail(d: CalDuration) -> bytes:
+    """months, days, exact tail — the whole of a nominal step."""
+    return (_leb(_zigzag(d.months)) + _leb(_zigzag(d.days))
+            + _leb(_zigzag(d.secs.numerator)) + _leb(d.secs.denominator))
+
+
+def _read_caldur(r: "_Reader") -> CalDuration:
+    step = caldur(months=_unzigzag(r.leb()), days=_unzigzag(r.leb()),
+                  seconds=Fraction(_unzigzag(r.leb()), r.leb()))
+    if not isinstance(step, CalDuration):
+        # months=days=0 reduces to a physical step, which has its own type.
+        raise ValueError("non-canonical nominal step: encode it as 0xA")
+    return step
+
+
 def encode(x) -> bytes:
     """Canonical binary ID. Equal sets ⇒ identical bytes.
 
@@ -195,6 +212,20 @@ def encode(x) -> bytes:
                 + struct.pack(">d", x.A)
                 + _leb(x.theta_turns.numerator) + _leb(x.theta_turns.denominator)
                 + _leb(x.quantum.numerator) + _leb(x.quantum.denominator))
+    if isinstance(x, Duration):
+        # A measure, not a set of time (§2.5): the key is the step length,
+        # so byte order sorts short steps before long ones.
+        fl, fr = _frac_parts(x.seconds)
+        return (_hdr(TYPE_DURATION) + _sortkey_time(x.seconds)
+                + _leb(fr.numerator) + _leb(fr.denominator))
+    if isinstance(x, CalDuration):
+        return (_hdr(TYPE_CALDUR) + bytes(8) + _caldur_tail(x))
+    if isinstance(x, CalSpan):
+        fl, fr = _frac_parts(x.anchor)
+        zone_b = x.zone.encode()
+        return (_hdr(TYPE_CALSPAN) + _sortkey_time(x.anchor)
+                + _leb(fr.numerator) + _leb(fr.denominator)
+                + bytes([len(zone_b)]) + zone_b + _caldur_tail(x.step))
     if isinstance(x, Windowed):
         sp = x.support
         fl, fr = _frac_parts(sp.start)
@@ -266,6 +297,17 @@ def decode(b: bytes):
         th = Fraction(r.leb(), r.leb())
         q = Fraction(r.leb(), r.leb())
         return FFTComponent(fs, N, k, t0, A, th, q)
+    if typ == TYPE_DURATION:
+        fl = int.from_bytes(r.take(8), "big") - 2**63
+        return Duration(fl + Fraction(r.leb(), r.leb()))
+    if typ == TYPE_CALDUR:
+        r.take(8)
+        return _read_caldur(r)
+    if typ == TYPE_CALSPAN:
+        fl = int.from_bytes(r.take(8), "big") - 2**63
+        anchor = fl + Fraction(r.leb(), r.leb())
+        zone = r.take(r.take(1)[0]).decode()
+        return CalSpan(anchor, _read_caldur(r), zone)
     if typ == TYPE_WINDOWED:
         fl = int.from_bytes(r.take(8), "big") - 2**63
         start = fl + Fraction(r.leb(), r.leb())
@@ -299,6 +341,12 @@ def name(x) -> str:
         body = "+".join(record_text(r) for r in x.records)
         suffix = "" if x.zone == "UTC" else f"!{x.zone}"
         return f"ic1:k:{body}{suffix}"
+    if isinstance(x, Duration):
+        return f"ic1:d:{fmt(x.seconds)}"
+    if isinstance(x, CalDuration):
+        return f"ic1:n:{x.text()}"
+    if isinstance(x, CalSpan):
+        return f"ic1:n:{x.text()}"
     if isinstance(x, Windowed):
         inner = name(x.cls)[len("ic1:"):]
         return f"ic1:x:s:{fmt(x.support.start)};{fmt(x.support.end)}|{inner}"
@@ -377,6 +425,35 @@ def _parse_fft_body(body: str) -> FFTComponent:
                         amp_from_hex(v["A"]), rat(v["th"]), rat(v["q"]))
 
 
+_NOMINAL_KEYS = {"mo": "months", "d": "days", "s": "seconds"}
+
+
+def _parse_nominal_body(body: str):
+    """n: a nominal step, optionally anchored (@t) in a zone (!zone)."""
+    zone = "UTC"
+    if "!" in body:
+        body, zone = body.split("!", 1)
+    anchor = None
+    if "@" in body:
+        body, anchor_text = body.split("@", 1)
+        anchor = rat(anchor_text)
+    kw = {}
+    for part in body.split(";"):
+        if not part:
+            raise ValueError("n: needs at least one of mo=, d=, s=")
+        key, _, val = part.partition("=")
+        if key not in _NOMINAL_KEYS:
+            raise ValueError(f"unknown nominal field {key!r}")
+        kw[_NOMINAL_KEYS[key]] = rat(val)
+    step = caldur(months=int(kw.get("months", 0)), days=int(kw.get("days", 0)),
+                  seconds=kw.get("seconds", 0))
+    if anchor is None:
+        return step
+    if not isinstance(step, CalDuration):
+        raise ValueError("an anchored exact step is a span — use ic1:s:")
+    return CalSpan(anchor, step, zone)
+
+
 def parse(s: str):
     """Parse a canonical text name back to its TimeSet (or f: record)."""
     s = s.strip()
@@ -414,6 +491,10 @@ def parse(s: str):
         a, b = span_part[2:].split(";")
         cls = parse("ic1:" + cls_part)
         return windowed(Span(rat(a), rat(b)), cls)
+    if body.startswith("d:"):
+        return Duration(rat(body[2:]))
+    if body.startswith("n:"):
+        return _parse_nominal_body(body[2:])
     if body.startswith("f:"):
         return _parse_fft_body(body[2:])
     raise ValueError(f"unrecognized name {s!r}")

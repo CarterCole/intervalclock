@@ -97,9 +97,18 @@ def test_phase_ids_cluster_by_period():
 
 def test_reserved_tags():
     with pytest.raises(ReservedTypeError):
-        decode(bytes([0x1A]))  # 0xA-0xF are still unclaimed
+        decode(bytes([0x1D]))  # 0xD-0xF are still unclaimed
     with pytest.raises(ReservedTypeError):
         decode(bytes([0x1F]))
+
+
+def test_duration_tags_are_claimed():
+    # 0xA-0xC are the duration layer now: a bare tag is truncated data,
+    # not a reserved type.
+    for tag in (0x1A, 0x1B, 0x1C):
+        with pytest.raises(ValueError) as e:
+            decode(bytes([tag]))
+        assert not isinstance(e.value, ReservedTypeError)
 
 
 def test_fft_tag_0x8_is_claimed():

@@ -21,7 +21,7 @@
   <div class="panel">
     <h2>Paste anything</h2>
     <input type="text" id="input" spellcheck="false"
-      placeholder="ic1: name · IC1- url · cron like */5 * * * * · period like 1/3 x3 @2 · 7.5hz · 2026-08-01T14">
+      placeholder="ic1: name · IC1- url · cron like */5 * * * * · period like 1/3 x3 @2 · 7.5hz · 2026-08-01T14 · step like P1M @ 1662854437">
     <div class="chips" id="examples"></div>
     <div class="error" id="error" hidden></div>
   </div>
@@ -76,6 +76,7 @@ import { nowTai } from "./lib/timescale.js";
 import { makeDial, setModulus, updateDial, makeArcDial, updateArcDial } from "./lib/dial.js";
 import { remember, resolve, isAliasLike } from "./lib/registry.js";
 import { PhaseEmitter } from "./lib/ticker.js";
+import { calspanSpan, calSpan, fromIso } from "./lib/duration.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -89,6 +90,8 @@ const EXAMPLES = [
   "2026-08-01T14 & 7.5hz",
   "2016-12-31T23:59:60",
   "0 9 * * TUE",
+  "ic1:d:5/2",
+  "P1M @ 1662854437",
 ];
 
 function atom(raw) {
@@ -110,14 +113,24 @@ function atom(raw) {
       { k: grid[3] ? parseInt(grid[3], 10) : 0,
         delta: grid[4] ? Frac.parse(grid[4]) : ZERO });
   }
+  // A step, optionally anchored: "P1M", "PT1H30M", "P1M @ 1662854437".
+  const iso = /^(-?P[^@]*?)(?:\s*@\s*(-?[\d./]+))?$/i.exec(s);
+  if (iso && /^-?P/i.test(s)) {
+    const step = fromIso(iso[1].trim());
+    return iso[2] ? calSpan(Frac.parse(iso[2]), step) : step;
+  }
   if (/^\d{4}(-|$)/.test(s)) return parse("ic1:g:" + s);
   if (s.split(/\s+/).length === 5) return fromCron(s);
-  throw new Error("could not interpret input — try an ic1: name, a cron, '1/3 x3 @2', '7.5hz', a cell, or mix with & and |");
+  throw new Error("could not interpret input — try an ic1: name, a cron, '1/3 x3 @2', '7.5hz', a cell, a step like 'P1M @ 1662854437', or mix with & and |");
 }
 
 // A cell is symbolic; to mix it, resolve to its physical span (UTC lens).
 function physical(x) {
   if (x?.type === "cell") return cellSpan(x);
+  if (x?.type === "calspan") return calspanSpan(x);
+  if (x?.type === "duration" || x?.type === "caldur") {
+    throw new Error("a duration is a step, not a set of time — anchor it (P1M @ 1662854437) to mix it");
+  }
   if (x?.type === "cron") {
     throw new Error("cron is symbolic (civil layer) — resolve it via the library/REST, or mix physical classes");
   }
@@ -174,6 +187,16 @@ function describe(x) {
   if (x instanceof Windowed) return `a phase class with support — a pure tone's identity (amplitude is data, not identity)`;
   if (x?.type === "cron") return `canonical cron, ${x.records.length} record(s), zone ${x.zone} — equivalent expressions share this ID`;
   if (x?.type === "cell") return `symbolic calendar cell (${x.kind}, ${x.zone}) — resolution is table-versioned`;
+  if (x?.type === "duration") return `a step of ${x.d} s — a measure, not a set of time; anchor it with @ to get an interval`;
+  if (x?.type === "caldur") {
+    const plural = (n, unit) => `${n} ${unit}${Math.abs(n) === 1 ? "" : "s"}`;
+    const bits = [];
+    if (x.months) bits.push(plural(x.months, "month"));
+    if (x.days) bits.push(plural(x.days, "day"));
+    if (!x.secs.isZero()) bits.push(`${x.secs} s`);
+    return `a nominal step (${bits.join(", ")}) — not a length until it is anchored`;
+  }
+  if (x?.type === "calspan") return `a nominal step anchored at ${x.anchor} (${x.zone}) — ${calspanSpan(x).duration} s here, symbolic so the tables can change`;
   return "";
 }
 

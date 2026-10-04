@@ -6,7 +6,7 @@ protocol](protocol/PROTOCOL.md) · [playground](https://clock.cartercole.com/pla
 
 **An H3 for time.** H3 gives every hexagon on Earth a canonical ID at every
 resolution; this project gives a canonical, globally computable name to every
-interval and every periodic phase class in existence — hours, days, ISO
+interval, every periodic phase class, and every step in existence — hours, days, ISO
 weeks, every possible cron schedule, "every 1/3 second, state 2", any
 rational frequency, and (in the protocol) FFT components of signals extended
 forever.
@@ -59,6 +59,11 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[api,dev]'
 # a calendar cell and its physical resolution (leap-second aware)
 .venv/bin/intervalclock parse 2026-08-01T14
 
+# a step — and that step anchored to a spot in time
+.venv/bin/intervalclock name --step P1M --anchor 1662854437
+#   name: ic1:n:mo=1@1662854437
+#   span: ic1:s:1662854437;1665446437 (30 days — that September)
+
 # run the tests / the REST API
 .venv/bin/python -m pytest tests/
 .venv/bin/uvicorn intervalclock.api:app
@@ -73,7 +78,25 @@ ic.name(c)                              # 'ic1:c:w=1/3;m=3;phi=2/3'
 ic.subset(ic.children(c, 4)[0], c)      # True — children tile the parent
 ic.union(*[...])                        # boolean algebra, exact over ℚ
 ic.from_cron("0 9 * * 2")               # canonical cron → one ID
-ic.cell_span(ic.cell("day", 2016, 12, 31)).duration   # Fraction(86401, 1)
+ic.cell_span(ic.cell("day", 2016, 12, 31)).duration   # Duration[86401 s]
+
+# durations: the canonical step (§2.5). Exact ones are physical…
+ic.duration(F(1, 3)).hz                 # 3
+ic.duration(300).grid().slot_at(1000)   # Span[900, 1200) — the 5-minute grid
+
+# …nominal ones are not lengths until you anchor them
+sep11 = ic.tai_from_unix(1662854400)
+ic.caldur(months=1).seconds_at(sep11)   # 2592000 — 30 days, that September
+nye16 = ic.cell_span(ic.cell("day", 2016, 12, 31)).start
+ic.caldur(days=1).seconds_at(nye16)     # 86401 — the day a leap second landed
+ic.name(ic.caldur(months=1).at(sep11))  # 'ic1:n:mo=1@1662854437' (symbolic)
+sep11 + ic.duration(90)                 # Instant — exact steps just add
+sep11.plus(ic.caldur(months=1), "America/Chicago")   # nominal: via the lens
+
+# a duration translates any set of time; a class is invariant under its period
+every5 = ic.duration(5).phase(2)        # 5 s on, 5 s off, forever
+every5 + ic.duration(1)                 # Φ[w=5s · m=2 · φ=1s]
+every5 + ic.duration(10) == every5      # True
 
 # events on the interval — blocking generator (also: ic.ticks async, ic.every callback)
 for pulse in ic.iter_ticks(c):
@@ -111,9 +134,12 @@ The core phase-class algebra, encodings, word aliases, calendar lens, and
 cron canonicalization all ship, as do the two v2 layers: the FFT/Nyquist
 mapping (`dsp.py`, binary type 0x8 and the `f:` text form) and schedule
 inference (`infer.py` — point it at a blog's publication timestamps and it
-answers "every Tuesday ~09:00"). 167 tests, including leap seconds, DST
-pathologies, byte-parity cross-tests against the browser core, and
-hypothesis property tests.
+answers "every Tuesday ~09:00"). The duration layer ships too (`duration.py`,
+types 0xA–0xC, the `d:` and `n:` text forms): an exact physical step, a
+nominal one that only becomes a length against an anchor, and the grid a
+step generates. 216 tests, including leap seconds, DST pathologies,
+byte-parity cross-tests against the browser core, and hypothesis property
+tests.
 
 ```python
 from intervalclock import infer, tai_from_unix, to_cron

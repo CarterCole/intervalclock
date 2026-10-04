@@ -4,6 +4,7 @@
     intervalclock name --cron '*/5 * * * *'      canonicalize a cron
     intervalclock name --period 1/3 --states 3 --state 2
     intervalclock name --hz 15/2
+    intervalclock name --step 300 | --step P1M [--anchor T]  a duration
     intervalclock name 2026-08-01T14 [--zone Z]  a calendar cell
     intervalclock parse NAME|IC1-URL             decode and describe
     intervalclock next NAME [-n N] [--from T]    upcoming occurrences
@@ -44,6 +45,7 @@ from . import (
     to_url,
 )
 from .calendar import Cell
+from .duration import CalDuration, CalSpan, Duration, cal_span, duration, from_iso
 from .encode import _parse_cell
 
 
@@ -83,6 +85,12 @@ def cmd_now(args) -> int:
     return 0
 
 
+def _step(text: str):
+    """A step, spelled either as exact seconds or as an ISO-8601 duration."""
+    t = text.strip()
+    return from_iso(t) if t.upper().lstrip("+-").startswith("P") else duration(rat(t))
+
+
 def cmd_name(args) -> int:
     if args.cron:
         x = from_cron(args.cron, zone=args.zone)
@@ -92,11 +100,15 @@ def cmd_name(args) -> int:
         x = phase(w, m, k=args.state or 0, delta=rat(args.delta or 0))
     elif args.hz:
         x = from_frequency(rat(args.hz))
+    elif args.step:
+        step = _step(args.step)
+        x = cal_span(rat(args.anchor), step, args.zone) if args.anchor else step
     elif args.cell:
         x = _parse_cell(args.cell if args.zone == "UTC"
                         else f"{args.cell}!{args.zone}")
     else:
-        print("nothing to name: pass --cron, --period, --hz, or a cell", file=sys.stderr)
+        print("nothing to name: pass --cron, --period, --hz, --step, or a cell",
+              file=sys.stderr)
         return 2
     print(_describe(x))
     return 0
@@ -108,6 +120,16 @@ def cmd_parse(args) -> int:
     if isinstance(x, Cell):
         sp = cell_span(x)
         print(f"span:  {name(sp)} ({float(sp.duration)} s)")
+    if isinstance(x, CalSpan):
+        sp = x.span()
+        print(f"span:  {name(sp)} ({float(sp.duration)} s here)")
+    if isinstance(x, Duration) and x != 0:
+        print(f"rate:  {x.hz} Hz")
+    if isinstance(x, (Duration, CalDuration)):
+        try:
+            print(f"iso:   {x.iso}")
+        except (ValueError, AttributeError):
+            pass
     return 0
 
 
@@ -174,6 +196,8 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--state", type=int, help="state k")
     sp.add_argument("--delta", help="anchor offset δ in seconds")
     sp.add_argument("--hz", help="frequency (period = 1/hz)")
+    sp.add_argument("--step", help="a duration: seconds (300, 5/2) or ISO (P1M)")
+    sp.add_argument("--anchor", help="anchor a step at TAI T to get an interval")
     sp.add_argument("--zone", default="UTC")
     sp.set_defaults(fn=cmd_name)
 

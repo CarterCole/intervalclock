@@ -5,6 +5,8 @@ from fractions import Fraction as F
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+import intervalclock as ic
+
 from intervalclock import (
     NEVER,
     complement,
@@ -94,3 +96,63 @@ def test_planted_subperiod_found(p, reps, _):
     P = p.period
     arcs = [((p.phi + i * P) % (reps * P), p.w) for i in range(reps)]
     assert pset(reps * P, arcs) == p
+
+
+# --- durations: the canonical step (§2.5) ----------------------------------
+
+steps = st.builds(ic.duration, rationals)
+anchors = st.integers(min_value=0, max_value=2_000_000_000)
+
+
+@given(steps)
+def test_step_names_round_trip(d):
+    assert parse(name(d)) == d
+    assert decode(encode(d)) == d
+    assert name(decode(encode(d))) == name(d)
+
+
+@given(rationals_pos, rationals, rationals)
+def test_grid_brackets_every_instant(step, phi, t):
+    g = ic.duration(step).grid(phi)
+    lo = g.floor(t)
+    assert lo <= t < lo + step
+    assert g.slot_at(t).contains(t)
+    assert g.slot(g.index(t)) == g.slot_at(t)
+
+
+@given(rationals_pos, rationals, st.integers(min_value=2, max_value=5))
+def test_grid_siblings_partition_time(step, phi, m):
+    cls = ic.duration(step).grid(phi).classes(m)
+    for i, a in enumerate(cls):
+        for b in cls[i + 1:]:
+            assert intersect(a, b) is NEVER or intersect(a, b) == NEVER
+    merged = cls[0]
+    for c in cls[1:]:
+        merged = union(merged, c)
+    assert merged == ic.ALWAYS
+
+
+@given(st.integers(min_value=1, max_value=48), anchors)
+def test_month_steps_are_monotone(n, anchor):
+    # Nominal steps have no fixed length, but they never run backwards.
+    a = ic.caldur(months=n).resolve(anchor).t
+    b = ic.caldur(months=n + 1).resolve(anchor).t
+    assert a < b
+
+
+@given(anchors)
+def test_a_civil_day_is_86400_or_86401_seconds(anchor):
+    assert ic.caldur(days=1).seconds_at(anchor) in (86400, 86401)
+
+
+@given(phases, rationals, rationals)
+def test_translation_is_a_group_action(cls, a, b):
+    assert ic.shift(ic.shift(cls, a), b) == ic.shift(cls, a + b)
+    assert ic.shift(cls, 0) == cls
+    assert ic.shift(cls, cls.period) == cls          # invariant under P
+    assert ic.shift(ic.shift(cls, a), -a) == cls
+
+
+@given(phases, rationals, rationals)
+def test_translation_moves_membership_with_it(cls, d, t):
+    assert contains(ic.shift(cls, d), t + d) == contains(cls, t)

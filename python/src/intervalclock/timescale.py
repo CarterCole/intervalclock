@@ -87,12 +87,58 @@ class Instant:
             raise RangeError(f"instant {q} outside ±2^63 s window")
 
     def __add__(self, dt) -> "Instant":
-        return Instant(self.t + rat(dt))
+        try:
+            return Instant(self.t + rat(dt))
+        except TypeError:
+            pass
+        from .duration import CalDuration
+
+        if isinstance(dt, CalDuration):
+            raise TypeError(
+                "a nominal step has no length until it is anchored — use "
+                "t.plus(step, zone) or step.resolve(t, zone)"
+            ) from None
+        raise TypeError(f"cannot add {dt!r} to an instant") from None
+
+    def plus(self, step, zone: str = "UTC", fold: int | None = None) -> "Instant":
+        """Add a step of either kind.
+
+        Exact steps are pure addition; a nominal step (months/days) goes
+        through the civil lens of `zone`, so the answer is stamped with the
+        tables that produced it. Note that months clamp, so plus/minus of the
+        same nominal step is not always a round trip (31 Mar − 1 month is
+        28 Feb, and back is 28 Mar).
+        """
+        from .duration import CalDuration
+
+        if isinstance(step, CalDuration):
+            return step.resolve(self, zone, fold)
+        return Instant(self.t + rat(step))
+
+    def minus(self, step, zone: str = "UTC", fold: int | None = None) -> "Instant":
+        from .duration import CalDuration
+
+        if isinstance(step, CalDuration):
+            return (-step).resolve(self, zone, fold)
+        return Instant(self.t - rat(step))
 
     def __sub__(self, other):
         if isinstance(other, Instant):
-            return self.t - other.t
-        return Instant(self.t - rat(other))
+            from .duration import Duration  # local: duration.py builds on us
+
+            return Duration(self.t - other.t)
+        try:
+            return Instant(self.t - rat(other))
+        except TypeError:
+            pass
+        from .duration import CalDuration
+
+        if isinstance(other, CalDuration):
+            raise TypeError(
+                "a nominal step has no length until it is anchored — use "
+                "t.minus(step, zone)"
+            ) from None
+        raise TypeError(f"cannot subtract {other!r} from an instant") from None
 
 
 def tai_minus_utc(unix: Fraction) -> int:

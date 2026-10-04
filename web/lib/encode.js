@@ -8,10 +8,12 @@ import {
 import { KINDS, cell } from "./cells.js";
 import { recordBytes, recordFromBytes } from "./cron.js";
 import { fftComponent } from "./fft.js";
+import { caldur, duration } from "./duration.js";
 
 export const VERSION = 1;
 const TYPES = { never: 0x0, always: 0x1, instant: 0x2, span: 0x3, phase: 0x4,
-  pset: 0x5, cell: 0x6, cron: 0x7, fftcomp: 0x8, windowed: 0x9 };
+  pset: 0x5, cell: 0x6, cron: 0x7, fftcomp: 0x8, windowed: 0x9,
+  duration: 0xa, caldur: 0xb, calspan: 0xc };
 
 const M64 = (1n << 64n) - 1n;
 
@@ -46,6 +48,20 @@ const sortkeyPeriod = (P) => f64be(Number(P.n) / Number(P.d));
 const hdr = (t) => [(VERSION << 4) | t];
 const fracParts = (q) => { const fl = q.floor(); return [fl, q.sub(new Frac(fl))]; };
 const lebFrac = (q) => [...leb(q.n), ...leb(q.d)];
+
+// months, days, exact tail — the whole of a nominal step.
+const caldurTail = (s) => [...leb(zigzag(BigInt(s.months))), ...leb(zigzag(BigInt(s.days))),
+  ...leb(zigzag(s.secs.n)), ...leb(s.secs.d)];
+
+function readCaldur(rd) {
+  const step = caldur({
+    months: Number(unzigzag(rd.leb())), days: Number(unzigzag(rd.leb())),
+    seconds: new Frac(unzigzag(rd.leb()), rd.leb()),
+  });
+  // months=days=0 reduces to a physical step, which has its own type.
+  if (step.type !== "caldur") throw new Error("non-canonical nominal step: encode it as 0xA");
+  return step;
+}
 
 export function encode(x) {
   if (x === NEVER || x?.type === "never") return Uint8Array.from(hdr(TYPES.never));
@@ -94,6 +110,24 @@ export function encode(x) {
     return Uint8Array.from([...hdr(TYPES.fftcomp), ...sortkeyTime(x.t0),
       ...lebFrac(fr), ...lebFrac(x.fs), ...leb(BigInt(x.N)), ...leb(BigInt(x.k)),
       ...f64be(x.A), ...lebFrac(x.th), ...lebFrac(x.q)]);
+  }
+  if (x?.type === "duration") {
+    const [, fr] = fracParts(x.d);
+    return Uint8Array.from([...hdr(TYPES.duration), ...sortkeyTime(x.d), ...lebFrac(fr)]);
+  }
+  if (x?.type === "caldur") {
+    if (!x.months && !x.days) {
+      // Nothing but an exact tail is a physical step, with its own type.
+      throw new Error("a nominal step needs months or days; this is a duration");
+    }
+    return Uint8Array.from([...hdr(TYPES.caldur), 0, 0, 0, 0, 0, 0, 0, 0,
+      ...caldurTail(x)]);
+  }
+  if (x?.type === "calspan") {
+    const [, fr] = fracParts(x.anchor);
+    const zoneB = new TextEncoder().encode(x.zone);
+    return Uint8Array.from([...hdr(TYPES.calspan), ...sortkeyTime(x.anchor),
+      ...lebFrac(fr), zoneB.length, ...zoneB, ...caldurTail(x.step)]);
   }
   if (x instanceof Windowed) {
     const [, fr] = fracParts(x.support.start);
@@ -174,6 +208,20 @@ export function decode(b) {
     const N = Number(r.leb()), k = Number(r.leb());
     const A = new DataView(Uint8Array.from(r.take(8)).buffer).getFloat64(0, false);
     return fftComponent({ fs, N, k, t0, A, th: r.frac(), q: r.frac() });
+  }
+  if (typ === TYPES.duration) {
+    const fl = r.u64() - (1n << 63n);
+    return duration(new Frac(fl).add(r.frac()));
+  }
+  if (typ === TYPES.caldur) {
+    r.take(8);
+    return readCaldur(r);
+  }
+  if (typ === TYPES.calspan) {
+    const fl = r.u64() - (1n << 63n);
+    const anchor = new Frac(fl).add(r.frac());
+    const zone = new TextDecoder().decode(Uint8Array.from(r.take(r.take(1)[0])));
+    return { type: "calspan", anchor, step: readCaldur(r), zone };
   }
   if (typ === TYPES.windowed) {
     const fl = r.u64() - (1n << 63n);

@@ -9,6 +9,7 @@ import {
 import { cellText, parseCell } from "./cells.js";
 import { cronName, parseCronBody } from "./cron.js";
 import { ampFromHex, ampHex, fftComponent } from "./fft.js";
+import { calspanText, caldurText, duration, parseNominalBody } from "./duration.js";
 
 // f: field order is canonical, not optional — unlike c:, which tolerates
 // reordering, an f: record has exactly one spelling.
@@ -47,6 +48,9 @@ export function name(x) {
   if (x instanceof Windowed) {
     return `ic1:x:s:${x.support.start};${x.support.end}|${name(x.cls).slice(4)}`;
   }
+  if (x?.type === "duration") return `ic1:d:${x.d}`;
+  if (x?.type === "caldur") return `ic1:n:${caldurText(x)}`;
+  if (x?.type === "calspan") return `ic1:n:${calspanText(x)}`;
   if (x?.type === "fftcomp") {
     return `ic1:f:fs=${x.fs};N=${x.N};k=${x.k};t0=${x.t0}`
       + `;A=${ampHex(x.A)};th=${x.th};q=${x.q}`;
@@ -90,6 +94,8 @@ export function parse(text) {
     const cls = parse("ic1:" + rest.slice(bar + 1));
     return windowed(new Span(Frac.parse(a), Frac.parse(b)), cls);
   }
+  if (tag === "d:") return duration(Frac.parse(rest));
+  if (tag === "n:") return parseNominalBody(rest);
   if (tag === "f:") return parseFftBody(rest);
   throw new Error(`unrecognized name ${s}`);
 }
