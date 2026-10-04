@@ -42,7 +42,9 @@ This document is the normative spec. The reference implementation is the
 
 ## 2. Objects and canonical forms
 
-Every nameable set of time is exactly one of:
+Every nameable set of time is exactly one of the first nine rows below.
+The last three name a **step** rather than a set — how long, not when
+(§2.5) — and `CalSpan` is the one that crosses back:
 
 | Type | Meaning |
 |---|---|
@@ -55,6 +57,9 @@ Every nameable set of time is exactly one of:
 | `Cell` | a symbolic calendar name (§5) |
 | `Cron` | a canonical cron disjunction (§6) |
 | `Windowed(S, C)` | support × class: a phase class restricted to a span (§2.4) |
+| `Duration(d)` | **a measure, not a set**: an exact step of `d ∈ ℚ` seconds (§2.5) |
+| `CalDuration` | a *nominal* step: months, days, exact tail — a length only once anchored (§2.5) |
+| `CalSpan` | a nominal step anchored to an instant: a symbolic interval (§2.5) |
 
 ### 2.1 The atom Φ(w, m, φ)
 
@@ -147,6 +152,70 @@ Containment is componentwise: `(S₁,C₁) ⊆ (S₂,C₂) ⟺ S₁⊆S₂ ∧ C
 eternal class is the degenerate unbounded-support case. A windowed class no
 pulse of which intersects its support reduces to `NEVER`.
 
+### 2.5 Durations: the canonical step
+
+Everything above is a *set* of time. A duration is not: it is a **measure**
+— a length with no place on the timeline. Formally it is the
+translation-invariance class of a Span (`Span(a, b)` and `Span(a+t, b+t)`
+have the same duration): the timeline quotiented by the translation group.
+It splits in two along exactly the line §5 draws:
+
+> **Duration(d)** — `d ∈ ℚ` seconds of TAI, signed, zero permitted. Exact,
+> table-free, eternal.
+>
+> **CalDuration(months, days, secs)** — `months, days ∈ ℤ`, `secs ∈ ℚ`, a
+> **nominal** step applied in that order. Not a length at all until it is
+> anchored: months vary, DST days are 23/25 h, leap-second days are
+> 86 401 s.
+
+Three fields suffice because the civil calendar fixes everything else
+exactly: 1 year = 12 months and 1 week = 7 days *always*, so years and
+weeks fold into months and days, while hours and minutes are exact physical
+seconds and fold into `secs`. What is left genuinely nominal is "same
+day-of-month next month" and "same wall clock tomorrow".
+
+**Mandatory normalizations**: years → months (×12), weeks → days (×7),
+hours/minutes → `secs`; and a nominal step with `months = days = 0` **is**
+a Duration and MUST be spelled as one — a civil second is an SI second by
+definition, while every larger unit can vary. Day-of-month clamping is the
+standard rule: 31 Jan + 1 month = 28 Feb (29 in a leap year). The `secs`
+tail is added as exact physical time, so a tail crossing an inserted leap
+second lands a second earlier on the wall clock than a naive reading
+suggests — the honest answer, and the reason h/m/s are not civil units.
+
+**Anchoring** turns a step back into a set of time:
+
+- physical: `Duration(d) @ t = Span(t, t+d)` (`Span(t+d, t)` when `d < 0`).
+  Nothing new is needed — a Span is already canonical.
+- nominal: `CalSpan(t, step, zone)`, a **symbolic** interval, symbolic for
+  exactly the reason Cells are (§5). "One month from 2022-09-11" is 30 days
+  there and 31 days elsewhere in the year; baking today's tzdata and leap
+  table into the *name* would make the name a moving target. Cells name only
+  the intervals the calendar has a word for; CalSpan names the rest ("90
+  days from signing", "a month from the 11th").
+
+**Grids.** A repeated step is the coordinate system that tiles all of time:
+slot `n` of `grid(d, φ)` is `[φ + nd, φ + (n+1)d)`, and its `m` siblings
+`Φ(d, m, φ + k·d)` partition it exactly as §2.1 requires. A grid is a
+coordinate system, *not* a set of time — as a set it is `ALWAYS` — so it
+gets no ID; its identity is the pair (Duration, phase), both of which are
+named. The decimal grid of §2.3 is one such grid; the calendar is its
+civil counterpart.
+
+**Translation.** Durations act on sets of time, and that action is what a
+duration *is*: `X + d` moves every point of X by d. `Instant + d` is an
+instant, `Span + d` a span, and `Φ(w, m, φ) + d = Φ(w, m, (φ+d) mod P)` —
+a class is invariant under a shift by its own period, which is exactly why
+φ lives in `[0, P)`, and shifting by `k·w` walks the m siblings of §2.1.
+Symbolic names do not translate: a Cell, a Cron, or a nominal step is a
+civil name, not a point set, and a nominal step has no fixed length to
+translate by — resolve at an anchor first.
+
+Durations order, add and scale as the rationals they are: `Instant − Instant`
+is a Duration and `Duration / Duration` is a dimensionless ratio. A Duration
+is not a phase class — `Φ` also needs a modulus — but Φ's pulse width `w`
+and period `P` are both durations, which is where the two layers meet.
+
 ## 3. Canonical text grammar
 
 The structured text name is the authoritative, registry-free canonical form.
@@ -162,8 +231,12 @@ body    := "never" | "always"
          | "g:" cell ["!" zone]                      (* calendar cell, default UTC *)
          | "k:" cronrec ("+" cronrec)* ["!" zone]    (* cron; "+" joins records *)
          | "x:" "s:" rat ";" rat "|" clsbody         (* windowed: span | class *)
+         | "d:" rat                                  (* duration: exact ℚ seconds *)
+         | "n:" nomstep ["@" rat ["!" zone]]         (* nominal step, optionally anchored *)
          | "f:" fft                                  (* FFT provenance record, §9 *)
 clsbody := ("c:" | "u:") …                           (* as above, without "ic1:" *)
+nomstep := nomfld (";" nomfld)*                     (* fields in the order below *)
+nomfld  := "mo=" int | "d=" int | "s=" rat          (* months, days, exact tail *)
 fft     := "fs=" rat ";N=" posint ";k=" uint ";t0=" rat
            ";A=" hex16 ";th=" rat ";q=" rat          (* field order is canonical *)
 hex16   := 16 lowercase hex digits                   (* IEEE-754 binary64, big-endian *)
@@ -176,7 +249,9 @@ term    := int | int"-"int | int"-"int"/"posint
 ```
 
 Baked-in canonicalization: rationals in lowest terms with positive
-denominators; `phi ∈ [0, P)`; no whitespace; cron month/dow names and
+denominators; `phi ∈ [0, P)`; zero-valued `n:` fields are omitted and the
+surviving ones keep the order `mo, d, s` (at least one must survive; an
+`n:` body with only `s=` is not canonical — it is a `d:`); no whitespace; cron month/dow names and
 7-as-Sunday normalized to numbers at parse; cron field text is the
 deterministic greedy projection of the bitmask (§6).
 
@@ -197,6 +272,9 @@ Worked examples (all verified by the reference implementation):
 | ISO week 31 of 2026 | `ic1:g:2026-W31` → `ic1:s:1785110437;1785715237` |
 | "Every 1/3 s, state 2" (w=1/3, m=3, k=2, δ=0) | `ic1:c:w=1/3;m=3;phi=2/3` |
 | cron `*/5 * * * *` (≡ `0-59/5` ≡ explicit list) | `ic1:k:0-55/5\|*\|*\|*\|*` |
+| A step of 2½ seconds | `ic1:d:5/2` |
+| One month, nominal (also spells "1 year" as `mo=12`) | `ic1:n:mo=1` |
+| One month starting 2022-09-11 UTC | `ic1:n:mo=1@1662854437` → resolves to `ic1:s:1662854437;1665446437` (30 days, that September) |
 | FFT bin at 7.5 Hz, phase π/3, t₀ = epoch | `ic1:c:w=1/15;m=2;phi=7/90` |
 | That bin as a provenance record (10 Hz, N=64, k=3, A=1.0, θ=1/6 turn) | `ic1:f:fs=10;N=64;k=3;t0=0;A=3ff0000000000000;th=1/6;q=1/16777216` |
 
@@ -242,7 +320,15 @@ All varints are unsigned LEB128; signed values use zigzag. Rationals are
   of IEEE-754 float64 big-endian amplitude**, then `th.num, th.den`,
   `q.num, q.den`. Every varint here is non-negative by construction (t₀'s
   sign lives in the offset-binary key), so no zigzag appears.
-- Decoders MUST reject unknown types (0xA–0xF) with a "reserved" error, and
+- **DURATION**: key = `uint64be(floor(d) + 2^63)` — the offset-binary trick
+  from INSTANT, so byte order sorts short steps before long ones and
+  negative steps before positive; tail = fractional part `num, den`.
+- **CALDUR**: key = zeros (symbolic, as for CRON); tail = `zigzag(months),
+  zigzag(days), zigzag(secs.num), secs.den`. Decoders MUST reject
+  `months = days = 0` as non-canonical — that step is a DURATION.
+- **CALSPAN**: anchor key and anchor-frac as for SPAN, then
+  `[1B zone-len][zone utf8]`, then the CALDUR tail.
+- Decoders MUST reject unknown types (0xD–0xF) with a "reserved" error, and
   reject unknown versions. Filling the 0x8 slot is deliberately forward-
   incompatible and backward-compatible: a v1-era decoder rejects an FFTCOMP
   ID with exactly the error it was told to raise, rather than misreading it.
@@ -260,7 +346,8 @@ protocol has two layers:
 
 - **Layer A (physical)**: Instant/Span/Φ/PSet/Windowed on rational TAI.
   Eternal, version-free, pure.
-- **Layer B (civil)**: Cell and Cron are canonical **symbolic** names.
+- **Layer B (civil)**: Cell, Cron, CalDuration and CalSpan are canonical
+  **symbolic** names.
   *Resolving* one to a physical Span is a function stamped with
   `(leap-table version, tzdata version)`. Same name everywhere; same
   resolution given the same tables.
@@ -406,7 +493,10 @@ observed time sets → names.
    two-layer split is forced, not chosen. (An optional idealized
    "proleptic-UTC" lens, under which any UTC cron is periodic with the
    400-year Gregorian period of 12 622 780 800 s, may compile cron → PSet
-   for users who accept the idealization; not implemented.)
+   for users who accept the idealization; not implemented.) The same
+   forcing makes a *nominal* step (§2.5) a step and not a length: "1 month"
+   has no number of seconds until it is anchored, and the number it then
+   has is stamped with the tables that produced it.
 3. **Fixed width vs exact ℚ**: pick two of {fixed width, exact rationals,
    no floor}. The encoding keeps exactness and the fixed 9-byte sortable
    prefix; the tail varies.
@@ -423,8 +513,8 @@ observed time sets → names.
   prefix: §9's mapping was frozen before anything could depend on it, and a
   decoder that predates the claim rejects the new type with the "reserved"
   error it was already required to raise. Note the consequence for §7: word
-  aliases hash the binary ID, so a slot's layout must be frozen — as 0x8 now
-  is — before any registry mints aliases for it.
+  aliases hash the binary ID, so a slot's layout must be frozen — as 0x8 and
+  0xA–0xC now are — before any registry mints aliases for it.
 - Wordlist: `bip39-english-v1`, frozen.
 - Leap table and tzdata versions stamp every civil resolution
   (`resolution_versions()`).

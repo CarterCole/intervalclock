@@ -32,6 +32,16 @@ objs = {
     "fft_interior": ic.FFTComponent(F(10), 64, 3, F(0), 1.0, F(1, 6)),
     "fft_dc": ic.FFTComponent(F(10), 64, 0, F(-7, 3), -0.5, 0),
     "fft_nyquist": ic.FFTComponent(F(1, 3), 64, 32, F(10**9), 2.5, F(1, 2)),
+    # Durations (§2.5): the physical step, the nominal step, and a nominal
+    # step anchored to a spot in time.
+    "step_5_2": ic.duration(F(5, 2)),
+    "step_neg": ic.duration(-3),
+    "step_day": ic.duration(86400),
+    "cal_month": ic.caldur(months=1),
+    "cal_mixed": ic.caldur(months=13, days=-2, seconds=F(1, 3)),
+    "cal_anchored": ic.caldur(months=1).at(1662854437),
+    "cal_anchored_zone": ic.caldur(months=1, seconds=30).at(
+        1662854437, "America/Chicago"),
 }
 
 golden = {
@@ -62,6 +72,26 @@ golden["_cron_next"] = [
     occurrences("0 9 * * 2", F(1785592837)),            # Tuesdays 09:00 UTC
     occurrences("59 23 31 12 *", F(1482968437)),        # leap-second minute 2016
     occurrences("0 0 29 2 *", F(1785592837)),           # next Feb 29
+]
+
+# Nominal steps resolved through the UTC lens: months clamp, days absorb
+# leap seconds. (Zoned resolution is library-side; the browser core is UTC.)
+def resolved(step, anchor: F):
+    return {"step": ic.name(step), "anchor": str(anchor),
+            "end": str(step.resolve(anchor).t),
+            "seconds": str(step.seconds_at(anchor))}
+
+
+_SEP11 = F(1662854437)              # 2022-09-11T00:00:00Z
+_LEAP_DAY = F(1483056037)           # 2016-12-31T00:00:00Z
+golden["_cal_resolve"] = [
+    resolved(ic.caldur(months=1), _SEP11),
+    resolved(ic.caldur(months=-1), _SEP11),
+    resolved(ic.caldur(months=17, days=3), _SEP11),
+    resolved(ic.caldur(days=1), _LEAP_DAY),
+    resolved(ic.caldur(days=1), _LEAP_DAY - 86400),
+    resolved(ic.caldur(months=1), F(1675123237)),   # 2023-01-31 → Feb 28
+    resolved(ic.caldur(days=90, seconds=F(1, 3)), _SEP11),
 ]
 
 OUT.write_text(json.dumps(golden, indent=1))

@@ -33,6 +33,7 @@ from .core import (  # noqa: F401
     prev_before,
     pset,
     reduce,
+    shift,
     span,
     state_at,
     subset,
@@ -59,6 +60,18 @@ from .encode import (  # noqa: F401
     name,
     parse,
     to_url,
+)
+from .duration import (  # noqa: F401
+    ZERO,
+    CalDuration,
+    CalSpan,
+    Duration,
+    Grid,
+    between,
+    cal_span,
+    caldur,
+    duration,
+    from_iso,
 )
 from .infer import InferResult, infer  # noqa: F401
 from .lattice import (  # noqa: F401

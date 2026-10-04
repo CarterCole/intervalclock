@@ -47,6 +47,16 @@ check("leap day duration",
 check("leap second cell",
   cellSpan(parse("ic1:g:2016-12-31T23:59:60")).duration.toString(), "1");
 
+// Nominal steps: the browser's UTC lens must land on the same instants.
+const { calResolve, calSecondsAt } = await import("../lib/duration.js");
+for (const v of golden._cal_resolve ?? []) {
+  const step = parse(v.step);
+  const anchor = Frac.parse(v.anchor);
+  check(`resolve ${v.step} @ ${v.anchor}`,
+    [calResolve(step, anchor).toString(), calSecondsAt(step, anchor).toString()],
+    [v.end, v.seconds]);
+}
+
 // UTC cron occurrences must match Python's civil-lens resolution exactly
 // (including the 61-second leap minute).
 const { fromCron, cronNextAfter } = await import("../lib/cron.js");

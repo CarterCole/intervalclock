@@ -27,7 +27,7 @@ from .timescale import Instant
 
 __all__ = [
     "ALWAYS", "NEVER", "Always", "Never", "PhaseClass", "PSet", "Span",
-    "Windowed", "TimeSet", "phase", "pset", "span", "windowed",
+    "Windowed", "TimeSet", "phase", "pset", "span", "windowed", "shift",
     "from_frequency", "reduce", "contains", "subset", "intersect", "union",
     "complement", "next_after", "prev_before", "occurrences", "state_at",
     "complexity",
@@ -36,6 +36,46 @@ __all__ = [
 
 def _t(x) -> Fraction:
     return x.t if isinstance(x, Instant) else rat(x)
+
+
+def _step(d) -> Fraction:
+    """A step, as exact seconds — nominal steps have no length to add."""
+    try:
+        return rat(d)
+    except TypeError:
+        pass
+    from .duration import CalDuration  # local: duration.py builds on core
+
+    if isinstance(d, CalDuration):
+        raise TypeError(
+            "a nominal step (months/days) has no fixed length, so it cannot "
+            "translate an eternal set — resolve it at an anchor first"
+        ) from None
+    raise TypeError(f"translate by a duration in seconds, not {d!r}") from None
+
+
+def shift(x, d):
+    """Translate a set of time by a duration. Durations act on everything.
+
+    A phase class shifted by its own period is the same class (that is what
+    makes φ live in [0, P)); shifting by k·w walks the m siblings of §2.1.
+    Symbolic objects (Cell, Cron) are civil names, not point sets, so they
+    do not translate — resolve them through the lens first.
+    """
+    q = _step(d)
+    if isinstance(x, (Always, Never)):
+        return x
+    if isinstance(x, Instant):
+        return Instant(x.t + q)
+    if isinstance(x, Span):
+        return Span(x.start + q, x.end + q)
+    if isinstance(x, PhaseClass):
+        return phase(x.w, x.m, phi=(x.phi + q) % x.period)
+    if isinstance(x, PSet):
+        return pset(x.period, [((s + q) % x.period, w) for s, w in x.arcs])
+    if isinstance(x, Windowed):
+        return windowed(shift(x.support, q), shift(x.cls, q))
+    raise TypeError(f"cannot translate {x!r} — resolve it to a physical set first")
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +89,11 @@ class Always:
     def contains(self, t) -> bool:
         return True
 
+    def __add__(self, d):
+        return self
+
+    __sub__ = __add__
+
     def __repr__(self):
         return "ALWAYS"
 
@@ -59,6 +104,11 @@ class Never:
 
     def contains(self, t) -> bool:
         return False
+
+    def __add__(self, d):
+        return self
+
+    __sub__ = __add__
 
     def __repr__(self):
         return "NEVER"
@@ -82,11 +132,20 @@ class Span:
             raise ValueError("span requires start < end")
 
     @property
-    def duration(self) -> Fraction:
-        return self.end - self.start
+    def duration(self):
+        """Length as a Duration (a Fraction subclass — compares as one)."""
+        from .duration import Duration  # local: duration.py builds on Span
+
+        return Duration(self.end - self.start)
 
     def contains(self, t) -> bool:
         return self.start <= _t(t) < self.end
+
+    def __add__(self, d):
+        return shift(self, d)
+
+    def __sub__(self, d):
+        return shift(self, -_step(d))
 
     def __repr__(self):
         return f"Span[{fmt(self.start)}, {fmt(self.end)})"
@@ -128,6 +187,12 @@ class PhaseClass:
     def contains(self, t) -> bool:
         return (_t(t) - self.phi) % self.period < self.w
 
+    def __add__(self, d):
+        return shift(self, d)
+
+    def __sub__(self, d):
+        return shift(self, -_step(d))
+
     def __repr__(self):
         s = self.state
         tail = f" (state {s} of {self.m})" if s is not None else ""
@@ -156,6 +221,12 @@ class PSet:
                 return True
         return False
 
+    def __add__(self, d):
+        return shift(self, d)
+
+    def __sub__(self, d):
+        return shift(self, -_step(d))
+
     def __repr__(self):
         a = ",".join(f"[{fmt(s)}+{fmt(w)})" for s, w in self.arcs)
         return f"PSet[P={fmt(self.period)}s · {a}]"
@@ -176,6 +247,12 @@ class Windowed:
 
     def contains(self, t) -> bool:
         return self.support.contains(t) and self.cls.contains(t)
+
+    def __add__(self, d):
+        return shift(self, d)
+
+    def __sub__(self, d):
+        return shift(self, -_step(d))
 
     def __repr__(self):
         return f"Windowed[{self.support!r} × {self.cls!r}]"

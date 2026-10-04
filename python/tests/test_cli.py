@@ -48,3 +48,24 @@ def test_alias_cmd(capsys):
 def test_error_paths(capsys):
     assert main(["parse", "ic1:bogus:xyz"]) == 2
     assert main(["name"]) == 2
+
+
+def test_name_step(capsys):
+    assert main(["name", "--step", "300"]) == 0
+    assert "ic1:d:300" in capsys.readouterr().out
+    assert main(["name", "--step", "P1M"]) == 0
+    assert "ic1:n:mo=1" in capsys.readouterr().out
+
+
+def test_name_anchored_step(capsys):
+    assert main(["name", "--step", "P1M", "--anchor", "1662854437"]) == 0
+    assert "ic1:n:mo=1@1662854437" in capsys.readouterr().out
+    assert main(["parse", "ic1:n:mo=1@1662854437"]) == 0
+    out = capsys.readouterr().out
+    assert "ic1:s:1662854437;1665446437" in out  # 30 days, that September
+
+
+def test_parse_step_describes_rate_and_iso(capsys):
+    assert main(["parse", "ic1:d:5400"]) == 0
+    out = capsys.readouterr().out
+    assert "1/5400 Hz" in out and "PT1H30M" in out

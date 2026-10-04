@@ -22,8 +22,10 @@ def rat(x) -> Fraction:
     converted *exactly* (every float is a dyadic rational) — callers who want
     a nicer nearby rational should use ``Fraction.limit_denominator`` first.
     """
-    if isinstance(x, Fraction):
+    if type(x) is Fraction:
         return x
+    if isinstance(x, Fraction):
+        return Fraction(x)  # strip subclasses (Duration) back to the scalar
     if isinstance(x, (int, str, Rational)):
         return Fraction(x)
     if isinstance(x, float):
