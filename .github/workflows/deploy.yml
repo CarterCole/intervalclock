@@ -8,11 +8,9 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: deploy
   cancel-in-progress: false
 
 jobs:
@@ -36,14 +34,18 @@ jobs:
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      name: production
+      url: https://clock.cartercole.net/
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - name: Assume the deploy role
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          path: web
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Upload to S3 and invalidate the CDN
+        run: scripts/deploy.sh
