@@ -39,9 +39,7 @@ once by hand:
 → Add provider → OpenID Connect, with provider URL `https://token.actions.githubusercontent.com`
 and audience `sts.amazonaws.com`.
 
-**2. A role** — call it `intervalclock-deploy` — with this trust policy. The `sub` condition
-is what keeps the role pinned to this repository's `main` branch; without it any workflow on
-GitHub could assume it.
+**2. A role** — call it `intervalclock-deploy` — with this trust policy:
 
 ```json
 {
@@ -56,7 +54,7 @@ GitHub could assume it.
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": "repo:CarterCole/intervalclock:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub": "repo:CarterCole@479219/intervalclock@1319782211:environment:production"
         }
       }
     }
@@ -64,7 +62,31 @@ GitHub could assume it.
 }
 ```
 
-and this permission policy, which reaches exactly one bucket and one distribution:
+That `sub` is worth reading twice, because it is not the format the AWS and GitHub
+documentation shows, and getting it wrong fails as a bare `Not authorized to perform
+sts:AssumeRoleWithWebIdentity` with no hint as to which condition missed.
+
+Two things make it unusual. **The owner and repository carry numeric ID suffixes** —
+`CarterCole@479219/intervalclock@1319782211`, not `CarterCole/intervalclock`. **And the
+trailing segment is `environment:production`, not `ref:refs/heads/main`**, because the
+deploy job declares an `environment:`. Declaring one changes the subject claim; that is a
+documented GitHub behaviour and easy to trip over when a job gains an environment later.
+
+Since the subject pins the environment rather than the branch, the branch restriction lives
+on the environment instead: `production` has a deployment branch policy allowing only
+`main`. Removing that policy would let any branch deploy.
+
+To read the subject a workflow actually sends — after a failed attempt, rather than guessing:
+
+```sh
+aws cloudtrail lookup-events --region us-east-1 \
+  --lookup-attributes AttributeKey=EventName,AttributeValue=AssumeRoleWithWebIdentity \
+  --max-results 5 --query 'Events[].CloudTrailEvent' --output text \
+  | python3 -c "import sys,json; [print(json.loads(c).get('requestParameters')) for l in sys.stdin for c in l.split(chr(9)) if c.strip()]"
+```
+
+The role also needs this permission policy, which reaches exactly one bucket and one
+distribution:
 
 ```json
 {
@@ -97,5 +119,6 @@ gh variable set AWS_DEPLOY_ROLE_ARN \
   --body arn:aws:iam::352441492542:role/intervalclock-deploy
 ```
 
-Until that variable is set the `deploy` job fails at the credentials step; the `test` job is
-unaffected.
+All of this is in place and deploying. If the `deploy` job ever fails at the credentials
+step, the subject claim is the first thing to check — the repository's numeric IDs are
+stable, but the trailing segment changes if the job's `environment:` changes.
