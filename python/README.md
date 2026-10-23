@@ -23,8 +23,10 @@ for pulse in ic.iter_ticks(c):      # events on the shared epoch-anchored lattic
 ```
 
 CLI: `intervalclock now | name | parse | next | contains | alias | infer`.
-Worked example: `python3 examples/nist_beacon.py` names the NIST Randomness
-Beacon from its publication times and shows the leap-second phase shift.
+Worked examples: `python3 examples/nist_beacon.py` names the NIST Randomness
+Beacon from its publication times and shows the leap-second phase shift;
+`python3 examples/bitcoin_blocks.py` decomposes the Bitcoin block interval and
+finds no schedule in it — a §10 null result, with the controls to back it.
 REST API: `uvicorn intervalclock.api:app` (needs the `[api]` extra).
 
 See the [repository README](https://github.com/CarterCole/intervalclock)
