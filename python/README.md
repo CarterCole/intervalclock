@@ -22,7 +22,9 @@ for pulse in ic.iter_ticks(c):      # events on the shared epoch-anchored lattic
     print(pulse)
 ```
 
-CLI: `intervalclock now | name | parse | next | contains | alias`.
+CLI: `intervalclock now | name | parse | next | contains | alias | infer`.
+Worked example: `python3 examples/nist_beacon.py` names the NIST Randomness
+Beacon from its publication times and shows the leap-second phase shift.
 REST API: `uvicorn intervalclock.api:app` (needs the `[api]` extra).
 
 See the [repository README](https://github.com/CarterCole/intervalclock)

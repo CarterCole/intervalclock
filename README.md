@@ -119,11 +119,49 @@ the wait is re-derived from the epoch-anchored lattice before each event, so
 nothing drifts — unlike `setInterval`, which is relative to whenever you
 happened to call it.
 
+## Worked example: the NIST Randomness Beacon
+
+The [NIST beacon](https://beacon.nist.gov) has published one pulse a minute
+since 2013. [`python/examples/nist_beacon.py`](python/examples/nist_beacon.py)
+pulls its recent pulses and runs inference over them:
+
+```
+every 1 min at +37 s
+  name:   ic1:c:w=1;m=60;phi=73/2
+  url:    IC1-2H04W0000000000104Y4J0G
+  alias:  town-amused-mention-offer
+  phase:  φ = 73/2 s, pulse centre at TAI ≡ 37 (mod 60)
+  fit:    R̄=1.000000  p=3.20e-47  matched=100%  jitter=±0s
+```
+
+Then it checks that class against pulses from the beacon's whole history,
+and the physical name turns out to be era-stamped:
+
+```
+probe                                     UTC                  unix%60  TAI−UTC  TAI%60  in ic1:c:w=1;m=60;phi=73/2?
+v1.0         2014-01-01 (TAI−UTC = 35)    2014-01-01 00:00:00        0       35      35  OUTSIDE
+v1.0         2016-01-01 (TAI−UTC = 36)    2016-01-01 00:00:00        0       36      36  OUTSIDE
+v1.0         2018-01-01 (TAI−UTC = 37)    2018-01-01 00:00:00        0       37      37  inside
+v2 chain 1   pulse 1                      2018-07-23 19:26:00        0       37      37  inside
+v2 chain 2   pulse 1                      2022-09-21 19:32:00        0       37      37  inside
+```
+
+Every pulse ever published lands on `unix % 60 == 0` — the beacon is locked
+to UTC — but the timeline is TAI, so each leap second moved the pulse one
+residue along the 60-second circle: 35 until mid-2015, 36 until the end of
+2016, 37 since. `ic1:c:w=1;m=60;phi=73/2` is the exact Layer-A name of the
+beacon *in the current era*, and the next leap second will change it. The
+name that survives is the Layer-B one, cron `* * * * *` (`ic1:k:*|*|*|*|*`).
+That is the two-layer split of [§5](protocol/PROTOCOL.md) and
+[§11](protocol/PROTOCOL.md) showing up in real data: a civil schedule is
+not a phase class, and no amount of fit (R̄ = 1 on 120 pulses) makes it one.
+
 ## Repository layout
 
 ```
 protocol/PROTOCOL.md     the spec (normative)
 python/                  reference library + CLI + REST API + tests
+python/examples/         worked examples against live data (NIST beacon)
 web/                     static site: docs, live clock, playground (TS core)
 future/                  what is still only specified, not built
 ```
