@@ -4,3 +4,5 @@ python/.venv/
 .pytest_cache/
 .hypothesis/
 .DS_Store
+.nist-beacon-cache/
+.bitcoin-blocks-cache/

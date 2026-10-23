@@ -119,11 +119,116 @@ the wait is re-derived from the epoch-anchored lattice before each event, so
 nothing drifts — unlike `setInterval`, which is relative to whenever you
 happened to call it.
 
+## Worked example: the NIST Randomness Beacon
+
+The [NIST beacon](https://beacon.nist.gov) has published one pulse a minute
+since 2013. [`python/examples/nist_beacon.py`](python/examples/nist_beacon.py)
+pulls its recent pulses and runs inference over them:
+
+```
+every 1 min at +37 s
+  name:   ic1:c:w=1;m=60;phi=73/2
+  url:    IC1-2H04W0000000000104Y4J0G
+  alias:  town-amused-mention-offer
+  phase:  φ = 73/2 s, pulse centre at TAI ≡ 37 (mod 60)
+  fit:    R̄=1.000000  p=3.20e-47  matched=100%  jitter=±0s
+```
+
+Then it checks that class against pulses from the beacon's whole history,
+and the physical name turns out to be era-stamped:
+
+```
+probe                                     UTC                  unix%60  TAI−UTC  TAI%60  in ic1:c:w=1;m=60;phi=73/2?
+v1.0         2014-01-01 (TAI−UTC = 35)    2014-01-01 00:00:00        0       35      35  OUTSIDE
+v1.0         2016-01-01 (TAI−UTC = 36)    2016-01-01 00:00:00        0       36      36  OUTSIDE
+v1.0         2018-01-01 (TAI−UTC = 37)    2018-01-01 00:00:00        0       37      37  inside
+v2 chain 1   pulse 1                      2018-07-23 19:26:00        0       37      37  inside
+v2 chain 2   pulse 1                      2022-09-21 19:32:00        0       37      37  inside
+```
+
+Every pulse ever published lands on `unix % 60 == 0` — the beacon is locked
+to UTC — but the timeline is TAI, so each leap second moved the pulse one
+residue along the 60-second circle: 35 until mid-2015, 36 until the end of
+2016, 37 since. `ic1:c:w=1;m=60;phi=73/2` is the exact Layer-A name of the
+beacon *in the current era*, and the next leap second will change it. The
+name that survives is the Layer-B one, cron `* * * * *` (`ic1:k:*|*|*|*|*`).
+That is the two-layer split of [§5](protocol/PROTOCOL.md) and
+[§11](protocol/PROTOCOL.md) showing up in real data: a civil schedule is
+not a phase class, and no amount of fit (R̄ = 1 on 120 pulses) makes it one.
+
+## Worked example: Bitcoin's ten-minute block, which is not a schedule
+
+The beacon is a schedule with a perfect fit. The other half of
+[§10](protocol/PROTOCOL.md) is knowing when to return nothing, and Bitcoin's
+famous ten-minute block is the cleanest case there is.
+[`python/examples/bitcoin_blocks.py`](python/examples/bitcoin_blocks.py) pulls
+real block timestamps from mempool.space and folds them:
+
+```
+$ python3 examples/bitcoin_blocks.py --tip 972800 --blocks 9072
+blocks 963729–972800  n=9072  span=61.13 d
+
+the §10 verdict, from the library:
+    no schedule beats chance in this data
+```
+
+That is the measurement, not a failure to measure. A schedule is a period *and
+a phase*; the block interval has a rate and no phase at all, and the example
+shows that four ways.
+
+**The gap is memoryless.** Median 407.0 s against ln2·mean = 403.6 s, CV =
+1.020, and `E[gap − s | gap > s]` ≈ 590 s whether you have already waited zero
+seconds or forty minutes. It is exponential *per retarget epoch* (KS p =
+0.14–0.35 for each of the five in the window); pooled over two months the same
+test gives p = 0.001, purely because the rate drifts between epochs. That is a
+mixture of exponentials, not a schedule.
+
+**Nothing concentrates at any period.** Each candidate is folded against 200
+synthetic homogeneous-Poisson sets of the same n and span:
+
+```
+       period   cycles       R̄  Rayleigh p  empirical p
+        600 s   8802.6   0.0093      0.4599        0.450
+        1 hour   1467.1  0.0066      0.6735        0.695
+        1 day     61.1   0.0178      0.0563        0.050
+        1 week      8.7  0.0335      0.0000        0.245
+      retarget     4.4   0.0616      0.0000        0.740
+```
+
+The 600 s fold *is* the noise floor (E[R̄] = 0.0093 for 9072 unscheduled
+events). The last two rows are why §10 stops candidates at span/3 and
+Bonferroni-adjusts the rest: the asymptotic Rayleigh p-value reads 0.0000 for
+a period the span covers four times, and the control says 0.740.
+
+**The spectrum is white.** Binned into 600 s cells the arrival process has
+var/mean = 1.011, a flat periodogram, and a loudest bin 8.2× the mean level —
+which 12 of 20 simulated Poisson sets beat. [§9](protocol/PROTOCOL.md) names
+that bin anyway, honestly, as a measurement rather than a tone. One structural
+joke falls out: sampling at 1/600 Hz puts Nyquist at 1/1200 Hz, so the 600 s
+target sits exactly *at* f_s and a true 600 s tone would alias to
+`ic1:always`. You cannot see Bitcoin's own period in a Bitcoin-paced sampler.
+
+**What is exactly periodic is counted in blocks, not seconds.** One block,
+2016 (a retarget), 210000 (a halving) — those are exact. In seconds they are
+[§2.5](protocol/PROTOCOL.md) *durations*, a period with no epoch anchor and so
+no phase: `ic1:d:600`, `ic1:d:1209600` (= `ic1:n:d=14`, exactly 14 days),
+`ic1:d:126000000`. Across all 466 full retarget epochs the mean interval is
+564.2 s with 76% of epochs under 600 s, and the lag-1 autocorrelation of the
+epoch mean is +0.56: the retarget corrects for an epoch that has ended while
+hashrate keeps growing through the next one, so the loop is always behind a
+trend it never catches. The 600 s target is a setpoint, not a clock anyone
+keeps.
+
+The decomposition, in the protocol's own terms: `ic1:always` × a Poisson rate,
+with every exact period on an axis the protocol does not name.
+
 ## Repository layout
 
 ```
 protocol/PROTOCOL.md     the spec (normative)
 python/                  reference library + CLI + REST API + tests
+python/examples/         worked examples against live data (NIST beacon,
+                         Bitcoin blocks)
 web/                     static site: docs, live clock, playground (TS core)
 future/                  what is still only specified, not built
 ```
