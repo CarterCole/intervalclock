@@ -1,8 +1,8 @@
 # interval_clock
 
-**Live at [clock.cartercole.com](https://clock.cartercole.com)** · [the
-protocol](protocol/PROTOCOL.md) · [playground](https://clock.cartercole.com/playground.html)
-· [explore](https://clock.cartercole.com/explore.html)
+**Live at [clock.cartercole.net](https://clock.cartercole.net)** · [the
+protocol](protocol/PROTOCOL.md) · [playground](https://clock.cartercole.net/playground.html)
+· [explore](https://clock.cartercole.net/explore.html)
 
 **An H3 for time.** H3 gives every hexagon on Earth a canonical ID at every
 resolution; this project gives a canonical, globally computable name to every
