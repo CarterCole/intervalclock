@@ -1,3 +1,5 @@
+![INTERVAL CLOCK](.github/banner.png)
+
 # interval_clock
 
 **Live at [clock.cartercole.net](https://clock.cartercole.net)** · [the
